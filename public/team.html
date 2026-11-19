@@ -13,10 +13,11 @@
   <!-- Header -->
   <header>
     <div class="brand">
-      <span class="brand-icon">🍳</span>
+      <img id="teamLogoImg" src="/logo.png" alt="DumCraft Logo" class="brand-logo" onerror="this.style.display='none'; document.getElementById('teamLogoFallback').style.display='inline-block';" onload="this.style.display='inline-block'; document.getElementById('teamLogoFallback').style.display='none';" style="display:none; height:38px; width:auto; max-width:110px; object-fit:contain; border-radius:6px;">
+      <span id="teamLogoFallback" class="brand-icon">🍳</span>
       <div>
         <span>DumCraft Team</span>
-        <span class="brand-subtitle" id="teamHeaderSubtitle">Kitchen & Operations</span>
+        <span class="brand-subtitle" id="teamHeaderSubtitle">Kitchen & Operations • Urapakkam</span>
       </div>
     </div>
     <div style="display: flex; gap: 8px; align-items: center;">

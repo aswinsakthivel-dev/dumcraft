@@ -10,10 +10,11 @@
 
   <header>
     <a href="/" class="brand">
-      <span class="brand-icon">🍲</span>
+      <img id="brandLogoImg" src="/logo.png" alt="DumCraft Logo" class="brand-logo" onerror="this.style.display='none'; document.getElementById('brandLogoFallback').style.display='inline-block';" onload="this.style.display='inline-block'; document.getElementById('brandLogoFallback').style.display='none';" style="display:none; height:42px; width:auto; max-width:120px; object-fit:contain; border-radius:6px;">
+      <span id="brandLogoFallback" class="brand-icon">🍲</span>
       <div>
         <span id="headerBrandName">DumCraft</span>
-        <span class="brand-subtitle">Cloud Kitchen • Hyderabad</span>
+        <span class="brand-subtitle">Cloud Kitchen • Urapakkam</span>
       </div>
     </a>
   </header>
