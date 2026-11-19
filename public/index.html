@@ -428,15 +428,15 @@
         let msg = (storeSettings.whatsapp_template || '').trim();
         if (msg) {
           msg = msg
-            .replace(/{order_no}/g, order.order_no)
-            .replace(/{date}/g, order.service_date)
-            .replace(/{name}/g, order.customer_name)
-            .replace(/{phone}/g, order.phone)
-            .replace(/{items}/g, itemsText)
-            .replace(/{total}/g, order.total)
-            .replace(/{address}/g, order.address);
+            .replace(/{(?:order_no|order_number|order number)}/gi, order.order_no)
+            .replace(/{(?:date|service_date|order_date|order service date)}/gi, order.service_date)
+            .replace(/{(?:name|customer_name|customer name)}/gi, order.customer_name)
+            .replace(/{(?:phone|mobile)}/gi, order.phone)
+            .replace(/{(?:items|items x quantity|items_x_quantity)}/gi, itemsText)
+            .replace(/{(?:total|total_value|total value|amount)}/gi, '₹' + order.total)
+            .replace(/{(?:address)}/gi, order.address);
         } else {
-          msg = `Hi DumCraft! I placed Order #${order.order_no} for ${order.service_date}.\nName: ${order.customer_name}\nItems: ${itemsText}\nTotal: ₹${order.total}.\nPlease confirm!`;
+          msg = `Hi DumCraft, I have placed an order #${order.order_no} for ${order.service_date}\nName: ${order.customer_name}\nItems: ${itemsText}\nTotal: ₹${order.total}`;
         }
         const waUrl = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(msg)}`;
         document.getElementById('confWhatsAppBtn').href = waUrl;
