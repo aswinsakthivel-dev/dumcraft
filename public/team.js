@@ -245,6 +245,15 @@ function renderOrders() {
       </div>
     `).join('');
 
+    // Payment status check
+    const isPaid = (o.notes && o.notes.includes('[PAID]')) || (o.payment_status === 'Paid');
+    const paymentButtonHtml = isPaid
+      ? `<span class="badge" style="background:#dcfce7; color:#15803d; font-weight:700;">✅ Paid</span> <button class="btn btn-secondary btn-sm" style="padding:2px 6px; font-size:0.75rem;" onclick="togglePayment(${o.id})" title="Mark Unpaid">Undo</button>`
+      : `<button class="btn btn-sm" style="background:#ecfdf5; color:#047857; border:1px solid #6ee7b7; font-weight:700; padding:4px 8px;" onclick="togglePayment(${o.id})">💵 Payment Done</button>`;
+
+    // Clean notes (remove [PAID] tag from display)
+    const cleanNotes = (o.notes || '').replace(/\[PAID\]/g, '').trim();
+
     // Phone links (Call + WhatsApp)
     const phoneClean = (o.phone || '').replace(/[^0-9]/g, '');
     const phoneLinks = phoneClean ? `
@@ -260,6 +269,7 @@ function renderOrders() {
           <span style="font-size:0.75rem; color:var(--text-muted); margin-left:6px;">(${o.source})</span>
         </div>
         <div style="display:flex; gap:6px; align-items:center;">
+          ${paymentButtonHtml}
           ${overLimitBadge}
           <span class="badge ${badgeClass}">${o.status}</span>
         </div>
@@ -272,8 +282,8 @@ function renderOrders() {
         <strong>Address:</strong> ${o.address}
       </div>
 
-      ${o.notes ? `<div style="font-size:0.8rem; background:#fffbeb; color:#92400e; padding:4px 8px; border-radius:4px; margin-bottom:8px;">
-        📝 <strong>Note:</strong> ${o.notes}
+      ${cleanNotes ? `<div style="font-size:0.8rem; background:#fffbeb; color:#92400e; padding:4px 8px; border-radius:4px; margin-bottom:8px;">
+        📝 <strong>Note:</strong> ${cleanNotes}
       </div>` : ''}
 
       <div class="order-items-list">
@@ -308,6 +318,50 @@ async function updateOrderStatus(orderId, status) {
     showAlert(`Order status updated to ${status}`);
   } catch (err) {
     showAlert(`Failed to update status: ${err.message}`, 'danger');
+  }
+}
+
+// Toggle Payment Status
+async function togglePayment(orderId) {
+  try {
+    const res = await apiFetch(`/api/team/orders/${orderId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ toggle_payment: true })
+    });
+    loadOrders(true);
+    showAlert(res.is_paid ? 'Marked as Paid ✅' : 'Marked as Unpaid');
+  } catch (err) {
+    showAlert(`Payment update failed: ${err.message}`, 'danger');
+  }
+}
+
+// Batch Update Orders for current date
+async function batchUpdateOrders(targetStatus, fromStatus = null) {
+  const dateVal = document.getElementById('orderDateFilter').value;
+  if (!dateVal) {
+    alert('Please select a specific date for batch actions.');
+    return;
+  }
+
+  const promptText = fromStatus 
+    ? `Mark ALL "${fromStatus}" orders for ${dateVal} as "${targetStatus}"?`
+    : `Mark ALL active orders for ${dateVal} as "${targetStatus}"?`;
+
+  if (!confirm(promptText)) return;
+
+  try {
+    const res = await apiFetch('/api/team/orders/batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        date: dateVal,
+        target_status: targetStatus,
+        from_status: fromStatus
+      })
+    });
+    loadOrders(true);
+    showAlert(`Updated ${res.updated || 0} order(s) to "${targetStatus}"!`);
+  } catch (err) {
+    showAlert(`Batch update failed: ${err.message}`, 'danger');
   }
 }
 
@@ -943,6 +997,7 @@ async function loadSettings() {
     if (settings.brand_name) document.getElementById('settingBrand').value = settings.brand_name;
     if (settings.whatsapp_number) document.getElementById('settingWhatsapp').value = settings.whatsapp_number;
     if (settings.payment_note) document.getElementById('settingPayment').value = settings.payment_note;
+    if (settings.whatsapp_template) document.getElementById('settingWaTemplate').value = settings.whatsapp_template;
   } catch (err) {}
 }
 
@@ -951,7 +1006,8 @@ async function saveStoreSettings(e) {
   const payload = {
     brand_name: document.getElementById('settingBrand').value.trim(),
     whatsapp_number: document.getElementById('settingWhatsapp').value.trim(),
-    payment_note: document.getElementById('settingPayment').value.trim()
+    payment_note: document.getElementById('settingPayment').value.trim(),
+    whatsapp_template: document.getElementById('settingWaTemplate').value.trim()
   };
 
   try {

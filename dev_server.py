@@ -102,7 +102,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # Public GET /api/settings
             if path == "/api/settings":
                 cur = conn.cursor()
-                cur.execute("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note')")
+                cur.execute("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template')")
                 rows = cur.fetchall()
                 data = {r["key"]: r["value"] for r in rows}
                 self.send_json(data)
@@ -445,6 +445,26 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": True, "date": date})
                 return
 
+            # Team POST /api/team/orders/batch - Batch status update
+            if path == "/api/team/orders/batch":
+                date = (body.get("date") or "").strip()
+                target_status = body.get("target_status")
+                from_status = body.get("from_status")
+                valid_statuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
+                if target_status not in valid_statuses:
+                    return self.send_error_json("Invalid target status")
+                if not date:
+                    return self.send_error_json("Date is required")
+
+                cur = conn.cursor()
+                if from_status and from_status in valid_statuses:
+                    cur.execute("UPDATE orders SET status = ? WHERE service_date = ? AND status = ?", (target_status, date, from_status))
+                else:
+                    cur.execute("UPDATE orders SET status = ? WHERE service_date = ? AND status NOT IN ('Cancelled', 'Delivered')", (target_status, date))
+                conn.commit()
+                self.send_json({"success": True, "updated": cur.rowcount, "target_status": target_status})
+                return
+
             # Team POST /api/team/orders (Manual order)
             if path == "/api/team/orders":
                 customer_name = (body.get("customer_name") or "").strip()
@@ -608,7 +628,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # PUT /api/team/settings
             if path == "/api/team/settings":
                 cur = conn.cursor()
-                for key in ["brand_name", "whatsapp_number", "payment_note"]:
+                for key in ["brand_name", "whatsapp_number", "payment_note", "whatsapp_template"]:
                     if key in body:
                         cur.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(body[key])))
                 conn.commit()
@@ -634,6 +654,22 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # PATCH /api/team/orders/:id
             if path.startswith("/api/team/orders/"):
                 order_id = int(path.split("/")[-1])
+
+                if body.get("toggle_payment"):
+                    cur = conn.cursor()
+                    cur.execute("SELECT notes FROM orders WHERE id = ?", (order_id,))
+                    row = cur.fetchone()
+                    current_notes = (row["notes"] if row and row["notes"] else "")
+                    if "[PAID]" in current_notes:
+                        new_notes = current_notes.replace("[PAID]", "").strip()
+                    else:
+                        new_notes = ("[PAID] " + current_notes).strip()
+                    cur.execute("UPDATE orders SET notes = ? WHERE id = ?", (new_notes, order_id))
+                    conn.commit()
+                    is_paid = "[PAID]" in new_notes
+                    self.send_json({"success": True, "id": order_id, "is_paid": is_paid})
+                    return
+
                 status = body.get("status")
                 valid_statuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
                 if status not in valid_statuses:

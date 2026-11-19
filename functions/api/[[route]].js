@@ -77,7 +77,7 @@ export async function onRequest(context) {
 
     // GET /api/settings - Public store settings
     if (path === '/settings' && method === 'GET') {
-      const rows = await db.prepare("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note')").all();
+      const rows = await db.prepare("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template')").all();
       const settings = {};
       (rows.results || []).forEach(r => { settings[r.key] = r.value; });
       return jsonResponse(settings);
@@ -428,11 +428,27 @@ export async function onRequest(context) {
       });
     }
 
-    // PATCH /api/team/orders/:id - Status update
+    // PATCH /api/team/orders/:id - Status or Payment update
     const orderPatchMatch = path.match(/^\/team\/orders\/(\d+)$/);
     if (orderPatchMatch && method === 'PATCH') {
       const id = parseInt(orderPatchMatch[1], 10);
       const b = await request.json();
+
+      // Toggle Payment Status
+      if (b.toggle_payment) {
+        const orderRow = await db.prepare("SELECT notes FROM orders WHERE id = ?").bind(id).first();
+        const currentNotes = (orderRow ? orderRow.notes : '') || '';
+        let newNotes;
+        if (currentNotes.includes('[PAID]')) {
+          newNotes = currentNotes.replace('[PAID]', '').trim();
+        } else {
+          newNotes = ('[PAID] ' + currentNotes).trim();
+        }
+        await db.prepare("UPDATE orders SET notes = ? WHERE id = ?").bind(newNotes, id).run();
+        const isPaid = newNotes.includes('[PAID]');
+        return jsonResponse({ success: true, id, is_paid: isPaid });
+      }
+
       const status = b.status;
       const validStatuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled'];
 
@@ -442,6 +458,31 @@ export async function onRequest(context) {
 
       await db.prepare("UPDATE orders SET status = ? WHERE id = ?").bind(status, id).run();
       return jsonResponse({ success: true, id, status });
+    }
+
+    // POST /api/team/orders/batch - Batch update order statuses for a service date
+    if (path === '/team/orders/batch' && method === 'POST') {
+      const b = await request.json();
+      const date = (b.date || '').trim();
+      const targetStatus = b.target_status;
+      const fromStatus = b.from_status;
+
+      const validStatuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled'];
+      if (!validStatuses.includes(targetStatus)) {
+        return errorResponse('Invalid target status. Allowed: ' + validStatuses.join(', '));
+      }
+      if (!date) {
+        return errorResponse('Date is required for batch update');
+      }
+
+      let res;
+      if (fromStatus && validStatuses.includes(fromStatus)) {
+        res = await db.prepare("UPDATE orders SET status = ? WHERE service_date = ? AND status = ?").bind(targetStatus, date, fromStatus).run();
+      } else {
+        res = await db.prepare("UPDATE orders SET status = ? WHERE service_date = ? AND status NOT IN ('Cancelled', 'Delivered')").bind(targetStatus, date).run();
+      }
+
+      return jsonResponse({ success: true, updated: res.meta.changes, target_status: targetStatus });
     }
 
     // POST /api/team/orders - Manual order entry by team
@@ -674,7 +715,7 @@ export async function onRequest(context) {
     // PUT /api/team/settings
     if (path === '/team/settings' && method === 'PUT') {
       const b = await request.json();
-      const allowedKeys = ['brand_name', 'whatsapp_number', 'payment_note'];
+      const allowedKeys = ['brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template'];
       const stmts = [];
 
       for (const key of allowedKeys) {

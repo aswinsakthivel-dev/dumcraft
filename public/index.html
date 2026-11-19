@@ -425,7 +425,19 @@
       if (waNumber) {
         const cleanNumber = waNumber.replace(/[^0-9]/g, '');
         const itemsText = order.items.map(it => `${it.qty}x ${it.name}`).join(', ');
-        const msg = `Hi DumCraft! I placed Order #${order.order_no} for ${order.service_date}.\nName: ${order.customer_name}\nItems: ${itemsText}\nTotal: ₹${order.total}.\nPlease confirm!`;
+        let msg = (storeSettings.whatsapp_template || '').trim();
+        if (msg) {
+          msg = msg
+            .replace(/{order_no}/g, order.order_no)
+            .replace(/{date}/g, order.service_date)
+            .replace(/{name}/g, order.customer_name)
+            .replace(/{phone}/g, order.phone)
+            .replace(/{items}/g, itemsText)
+            .replace(/{total}/g, order.total)
+            .replace(/{address}/g, order.address);
+        } else {
+          msg = `Hi DumCraft! I placed Order #${order.order_no} for ${order.service_date}.\nName: ${order.customer_name}\nItems: ${itemsText}\nTotal: ₹${order.total}.\nPlease confirm!`;
+        }
         const waUrl = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(msg)}`;
         document.getElementById('confWhatsAppBtn').href = waUrl;
         document.getElementById('confWhatsAppBtn').style.display = 'inline-flex';
