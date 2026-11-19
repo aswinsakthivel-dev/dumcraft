@@ -79,15 +79,12 @@
       <!-- Batch Fulfill & Status Actions -->
       <div class="card" style="background: #f8fafc; border: 1px dashed var(--border); padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
         <span style="font-size: 0.85rem; font-weight: 700; color: var(--secondary);">⚡ Batch Actions for this Date:</span>
-        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <button onclick="batchUpdateOrders('Confirmed', 'New')" class="btn btn-secondary btn-sm" style="font-weight: 600;">
-            ✨ Mark All Confirmed
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button onclick="batchUpdateOrders('Confirmed', 'New')" class="btn btn-primary btn-sm" style="font-weight: 700;">
+            ✨ Mark All Confirm
           </button>
-          <button onclick="batchUpdateOrders('Out for delivery')" class="btn btn-sm" style="background: #fef08a; color: #854d0e; border: 1px solid #fde047; font-weight: 700;">
-            🛵 Mark All Out for Delivery
-          </button>
-          <button onclick="batchUpdateOrders('Delivered')" class="btn btn-success btn-sm" style="font-weight: 700;">
-            ✅ Mark All Delivered
+          <button onclick="batchUpdateOrders('Dunzo-ED')" class="btn btn-sm" style="background: #fef08a; color: #854d0e; border: 1px solid #fde047; font-weight: 700;">
+            🛵 Mark All Dunzo-ED
           </button>
         </div>
       </div>
@@ -115,11 +112,10 @@
       <!-- Orders Filter Pills -->
       <div style="display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 4px;">
         <button class="btn btn-sm btn-secondary active-filter" onclick="filterOrderStatus('ALL')" id="filter-btn-ALL">All (<span id="count-ALL">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('New')" id="filter-btn-New">New (<span id="count-New">0</span>)</button>
+        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('New')" id="filter-btn-New">Yet to Confirm (<span id="count-New">0</span>)</button>
         <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Confirmed')" id="filter-btn-Confirmed">Confirmed (<span id="count-Confirmed">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Preparing')" id="filter-btn-Preparing">Preparing (<span id="count-Preparing">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Out for delivery')" id="filter-btn-Out">Out (<span id="count-Out">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Delivered')" id="filter-btn-Delivered">Delivered (<span id="count-Delivered">0</span>)</button>
+        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Dunzo-ED')" id="filter-btn-Dunzo">Dunzo-ED (<span id="count-Dunzo">0</span>)</button>
+        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Cancelled')" id="filter-btn-Cancelled">Cancelled (<span id="count-Cancelled">0</span>)</button>
       </div>
 
       <!-- Orders List -->

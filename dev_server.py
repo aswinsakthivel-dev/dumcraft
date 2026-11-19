@@ -227,7 +227,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # Team GET /api/team/finances
             if path == "/api/team/finances":
                 cur = conn.cursor()
-                cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered')")
+                cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')")
                 conf_income = cur.fetchone()["total"]
 
                 cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status = 'New'")
@@ -450,7 +450,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                 date = (body.get("date") or "").strip()
                 target_status = body.get("target_status")
                 from_status = body.get("from_status")
-                valid_statuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
+                valid_statuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled', 'Dunzo-ED']
                 if target_status not in valid_statuses:
                     return self.send_error_json("Invalid target status")
                 if not date:
@@ -671,7 +671,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                     return
 
                 status = body.get("status")
-                valid_statuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled']
+                valid_statuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled', 'Dunzo-ED']
                 if status not in valid_statuses:
                     return self.send_error_json(f"Invalid status: {status}")
 

@@ -189,12 +189,20 @@ async function loadOrders(silent = false) {
 
     // Update filter counts
     const counts = summary.status_counts || {};
+    const confirmedCount = (counts.Confirmed || 0) + (counts.Preparing || 0);
+    const dunzoCount = (counts['Dunzo-ED'] || 0) + (counts['Out for delivery'] || 0) + (counts.Delivered || 0);
+    const newCount = counts.New || 0;
+    const cancelledCount = counts.Cancelled || 0;
+
     document.getElementById('count-ALL').textContent = ordersData.length;
-    document.getElementById('count-New').textContent = counts.New || 0;
-    document.getElementById('count-Confirmed').textContent = counts.Confirmed || 0;
-    document.getElementById('count-Preparing').textContent = counts.Preparing || 0;
-    document.getElementById('count-Out').textContent = counts['Out for delivery'] || 0;
-    document.getElementById('count-Delivered').textContent = counts.Delivered || 0;
+    document.getElementById('count-New').textContent = newCount;
+    document.getElementById('count-Confirmed').textContent = confirmedCount;
+    if (document.getElementById('count-Dunzo')) {
+      document.getElementById('count-Dunzo').textContent = dunzoCount;
+    }
+    if (document.getElementById('count-Cancelled')) {
+      document.getElementById('count-Cancelled').textContent = cancelledCount;
+    }
 
     renderOrders();
   } catch (err) {
@@ -205,32 +213,120 @@ async function loadOrders(silent = false) {
 function filterOrderStatus(status) {
   currentStatusFilter = status;
   document.querySelectorAll('[id^="filter-btn-"]').forEach(btn => btn.classList.remove('btn-primary'));
-  const activeBtn = document.getElementById(`filter-btn-${status === 'Out for delivery' ? 'Out' : status}`);
+  let btnId = `filter-btn-${status}`;
+  if (status === 'Dunzo-ED') btnId = 'filter-btn-Dunzo';
+  const activeBtn = document.getElementById(btnId);
   if (activeBtn) activeBtn.classList.add('btn-primary');
   renderOrders();
 }
 
+function copyAddress(btn, encodedAddr) {
+  const addr = decodeURIComponent(encodedAddr);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(addr).then(() => {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✅ Copied!';
+      btn.classList.add('btn-success');
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.classList.remove('btn-success');
+      }, 2000);
+    }).catch(() => fallbackCopy(btn, addr));
+  } else {
+    fallbackCopy(btn, addr);
+  }
+}
+
+function fallbackCopy(btn, text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  const orig = btn.innerHTML;
+  btn.innerHTML = '✅ Copied!';
+  setTimeout(() => { btn.innerHTML = orig; }, 2000);
+}
+
 function renderOrders() {
   const listEl = document.getElementById('ordersList');
-  const filtered = ordersData.filter(o => currentStatusFilter === 'ALL' || o.status === currentStatusFilter);
+
+  // Filter orders
+  let filtered = ordersData.filter(o => {
+    if (currentStatusFilter === 'ALL') return true;
+    if (currentStatusFilter === 'New') return o.status === 'New';
+    if (currentStatusFilter === 'Confirmed') return o.status === 'Confirmed' || o.status === 'Preparing';
+    if (currentStatusFilter === 'Dunzo-ED') return o.status === 'Dunzo-ED' || o.status === 'Out for delivery' || o.status === 'Delivered';
+    if (currentStatusFilter === 'Cancelled') return o.status === 'Cancelled';
+    return o.status === currentStatusFilter;
+  });
 
   if (filtered.length === 0) {
     listEl.innerHTML = '<div class="card" style="text-align:center; padding:24px; color:var(--text-muted);">No orders found for this selection.</div>';
     return;
   }
 
+  // Sort orders so Cancelled always stays at the bottom
+  // Priority: 1. New (Yet to Confirm) -> 2. Confirmed/Preparing -> 3. Dunzo-ED/Delivered -> 4. Cancelled
+  const getPriority = (status) => {
+    if (status === 'New') return 1;
+    if (status === 'Confirmed' || status === 'Preparing') return 2;
+    if (status === 'Dunzo-ED' || status === 'Out for delivery' || status === 'Delivered') return 3;
+    if (status === 'Cancelled') return 4;
+    return 2;
+  };
+
+  filtered.sort((a, b) => getPriority(a.status) - getPriority(b.status) || b.id - a.id);
+
   listEl.innerHTML = '';
+  let lastGroup = null;
+
   filtered.forEach(o => {
     const card = document.createElement('div');
     card.className = 'order-card';
 
-    // Status badge class
+    // Group Header when viewing ALL
+    if (currentStatusFilter === 'ALL') {
+      let groupName = '';
+      if (o.status === 'New') groupName = '⏳ Yet to Confirm';
+      else if (o.status === 'Confirmed' || o.status === 'Preparing') groupName = '👨‍🍳 Confirmed Orders';
+      else if (o.status === 'Dunzo-ED' || o.status === 'Out for delivery' || o.status === 'Delivered') groupName = '🛵 Dunzo-ED / Dispatched';
+      else if (o.status === 'Cancelled') groupName = '❌ Cancelled Orders';
+
+      if (groupName && groupName !== lastGroup) {
+        lastGroup = groupName;
+        const groupHeader = document.createElement('div');
+        groupHeader.style.cssText = 'font-weight:700; font-size:0.95rem; color:var(--secondary); margin:16px 0 8px; padding-bottom:4px; border-bottom:2px solid var(--border); display:flex; align-items:center; gap:6px;';
+        groupHeader.innerHTML = groupName;
+        listEl.appendChild(groupHeader);
+      }
+    }
+
+    // Cancelled Styling
+    const isCancelled = o.status === 'Cancelled';
+    if (isCancelled) {
+      card.style.background = '#fef2f2';
+      card.style.borderColor = '#fca5a5';
+      card.style.opacity = '0.85';
+    }
+
+    // Status badge class & text
     let badgeClass = 'badge-new';
-    if (o.status === 'Confirmed') badgeClass = 'badge-confirmed';
-    else if (o.status === 'Preparing') badgeClass = 'badge-preparing';
-    else if (o.status === 'Out for delivery') badgeClass = 'badge-delivery';
-    else if (o.status === 'Delivered') badgeClass = 'badge-delivered';
-    else if (o.status === 'Cancelled') badgeClass = 'badge-cancelled';
+    let statusLabel = o.status;
+    if (o.status === 'New') {
+      statusLabel = 'Yet to Confirm';
+      badgeClass = 'badge-new';
+    } else if (o.status === 'Confirmed' || o.status === 'Preparing') {
+      statusLabel = 'Confirmed';
+      badgeClass = 'badge-confirmed';
+    } else if (o.status === 'Dunzo-ED' || o.status === 'Out for delivery' || o.status === 'Delivered') {
+      statusLabel = 'Dunzo-ED';
+      badgeClass = 'badge-delivery';
+    } else if (isCancelled) {
+      statusLabel = 'Cancelled';
+      badgeClass = 'badge-cancelled';
+    }
 
     // Over limit warning badge
     const overLimitBadge = o.over_limit 
@@ -248,7 +344,7 @@ function renderOrders() {
     // Payment status check
     const isPaid = (o.notes && o.notes.includes('[PAID]')) || (o.payment_status === 'Paid');
     const paymentButtonHtml = isPaid
-      ? `<span class="badge" style="background:#dcfce7; color:#15803d; font-weight:700;">✅ Paid</span> <button class="btn btn-secondary btn-sm" style="padding:2px 6px; font-size:0.75rem;" onclick="togglePayment(${o.id})" title="Mark Unpaid">Undo</button>`
+      ? `<button class="btn btn-sm" style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-weight:700; padding:4px 8px;" onclick="togglePayment(${o.id})" title="Click to undo payment">✅ Paid</button>`
       : `<button class="btn btn-sm" style="background:#ecfdf5; color:#047857; border:1px solid #6ee7b7; font-weight:700; padding:4px 8px;" onclick="togglePayment(${o.id})">💵 Payment Done</button>`;
 
     // Clean notes (remove [PAID] tag from display)
@@ -262,6 +358,8 @@ function renderOrders() {
       <a href="https://wa.me/91${phoneClean}" target="_blank">💬 WhatsApp</a>
     ` : `<span class="muted">No phone</span>`;
 
+    const encodedAddr = encodeURIComponent(o.address || '');
+
     card.innerHTML = `
       <div class="order-header">
         <div>
@@ -271,15 +369,22 @@ function renderOrders() {
         <div style="display:flex; gap:6px; align-items:center;">
           ${paymentButtonHtml}
           ${overLimitBadge}
-          <span class="badge ${badgeClass}">${o.status}</span>
+          <span class="badge ${badgeClass}">${statusLabel}</span>
         </div>
       </div>
 
-      <div class="order-customer">${o.customer_name}</div>
+      <div class="order-customer" style="font-size:1rem; font-weight:700; color:var(--secondary);">${o.customer_name}</div>
       <div class="order-contact">${phoneLinks}</div>
 
-      <div style="font-size:0.85rem; margin-bottom:8px; color:var(--secondary);">
-        <strong>Address:</strong> ${o.address}
+      <!-- Address with Copy Button -->
+      <div style="font-size:0.88rem; margin-bottom:8px; background:#f8fafc; border:1px solid var(--border); border-radius:6px; padding:8px 10px; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+        <div style="word-break:break-word;">
+          <strong style="color:var(--secondary);">📍 Address:</strong>
+          <div style="margin-top:2px;">${o.address}</div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="copyAddress(this, '${encodedAddr}')" style="padding:4px 8px; font-size:0.75rem; flex-shrink:0; white-space:nowrap;" title="Copy address to clipboard">
+          📋 Copy
+        </button>
       </div>
 
       ${cleanNotes ? `<div style="font-size:0.8rem; background:#fffbeb; color:#92400e; padding:4px 8px; border-radius:4px; margin-bottom:8px;">
@@ -294,13 +399,29 @@ function renderOrders() {
         </div>
       </div>
 
-      <div class="order-status-actions">
-        <span style="font-size:0.75rem; color:var(--text-muted); margin-right:4px; align-self:center;">Move to:</span>
-        <button class="btn btn-secondary btn-sm" onclick="updateOrderStatus(${o.id}, 'Confirmed')">Confirm</button>
-        <button class="btn btn-secondary btn-sm" onclick="updateOrderStatus(${o.id}, 'Preparing')">Cook</button>
-        <button class="btn btn-secondary btn-sm" onclick="updateOrderStatus(${o.id}, 'Out for delivery')">Out for Delivery</button>
-        <button class="btn btn-secondary btn-sm" onclick="updateOrderStatus(${o.id}, 'Delivered')">Delivered</button>
-        <button class="btn btn-outline-danger btn-sm" onclick="updateOrderStatus(${o.id}, 'Cancelled')">Cancel</button>
+      <!-- Simple 4 Clickable Action Buttons -->
+      <div class="order-status-actions" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:8px; border-top:1px solid var(--border);">
+        ${o.status === 'New' ? `
+          <button class="btn btn-primary btn-sm" onclick="updateOrderStatus(${o.id}, 'Confirmed')" style="font-weight:700;">
+            ✨ Confirm
+          </button>
+        ` : ''}
+
+        ${o.status !== 'Dunzo-ED' && !isCancelled ? `
+          <button class="btn btn-sm" style="background:#fef08a; color:#854d0e; border:1px solid #fde047; font-weight:700;" onclick="updateOrderStatus(${o.id}, 'Dunzo-ED')">
+            🛵 Dunzo-ED
+          </button>
+        ` : ''}
+
+        ${!isCancelled ? `
+          <button class="btn btn-outline-danger btn-sm" onclick="updateOrderStatus(${o.id}, 'Cancelled')">
+            ❌ Cancel
+          </button>
+        ` : `
+          <button class="btn btn-secondary btn-sm" onclick="updateOrderStatus(${o.id}, 'Confirmed')" style="font-size:0.75rem;">
+            🔄 Reopen Order
+          </button>
+        `}
       </div>
     `;
 

@@ -401,7 +401,7 @@ export async function onRequest(context) {
       let totalPortionsToCook = 0;
       let totalActiveOrders = 0;
       const itemTotals = {};
-      const statusCounts = { New: 0, Confirmed: 0, Preparing: 0, 'Out for delivery': 0, Delivered: 0, Cancelled: 0 };
+      const statusCounts = { New: 0, Confirmed: 0, Preparing: 0, 'Out for delivery': 0, Delivered: 0, Cancelled: 0, 'Dunzo-ED': 0 };
 
       orders.forEach(o => {
         o.items = itemsMap.get(o.id) || [];
@@ -450,7 +450,7 @@ export async function onRequest(context) {
       }
 
       const status = b.status;
-      const validStatuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled'];
+      const validStatuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled', 'Dunzo-ED'];
 
       if (!validStatuses.includes(status)) {
         return errorResponse('Invalid status. Allowed: ' + validStatuses.join(', '));
@@ -467,7 +467,7 @@ export async function onRequest(context) {
       const targetStatus = b.target_status;
       const fromStatus = b.from_status;
 
-      const validStatuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled'];
+      const validStatuses = ['New', 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Cancelled', 'Dunzo-ED'];
       if (!validStatuses.includes(targetStatus)) {
         return errorResponse('Invalid target status. Allowed: ' + validStatuses.join(', '));
       }
@@ -610,7 +610,7 @@ export async function onRequest(context) {
       // Calculate Confirmed Income: orders with Confirmed, Preparing, Out for delivery, Delivered
       const confIncomeRow = await db.prepare(`
         SELECT COALESCE(SUM(total), 0) as total FROM orders 
-        WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered')
+        WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')
       `).first();
 
       // Expected Income: 'New' orders
