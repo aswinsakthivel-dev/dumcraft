@@ -9,7 +9,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "dumcraft-db"
-database_id = "xxxxxx-d1-placeholder"
+database_id = "5d996a74-fff6-4125-bc0f-82a95b24c3af"
 
 [vars]
-TEAM_KEY = "dc_secret_team_demo2026"
+TEAM_KEY = "dumcraft2026"
