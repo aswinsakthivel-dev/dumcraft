@@ -63,10 +63,13 @@
       <!-- Date Selector & Action Bar -->
       <div class="card" style="margin-bottom: 12px; padding: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;">
-            <label for="orderDateFilter" style="margin: 0; font-size: 0.85rem;">Date:</label>
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 240px; flex-wrap: wrap;">
+            <label for="orderDateFilter" style="margin: 0; font-size: 0.85rem; font-weight: 700;">Date:</label>
             <input type="date" id="orderDateFilter" onchange="loadOrders()" style="width: auto; padding: 6px 10px; font-size: 0.9rem;">
-            <button onclick="setTodayDate()" class="btn btn-secondary btn-sm">Today</button>
+            <button type="button" onclick="setTodayDate()" class="btn btn-secondary btn-sm">Today</button>
+            <button type="button" onclick="goToNextServiceDay()" class="btn btn-primary btn-sm" style="font-weight: 600;" title="Jump straight to next upcoming service day">
+              📅 Next Service Day ⏭
+            </button>
           </div>
           <div style="display: flex; gap: 6px;">
             <button onclick="openManualOrderModal()" class="btn btn-primary btn-sm">+ Manual Order</button>
@@ -76,21 +79,8 @@
         </div>
       </div>
 
-      <!-- Batch Fulfill & Status Actions -->
-      <div class="card" style="background: #f8fafc; border: 1px dashed var(--border); padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-        <span style="font-size: 0.85rem; font-weight: 700; color: var(--secondary);">⚡ Batch Actions for this Date:</span>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button onclick="batchUpdateOrders('Confirmed', 'New')" class="btn btn-primary btn-sm" style="font-weight: 700;">
-            ✨ Mark All Confirm
-          </button>
-          <button onclick="batchUpdateOrders('Dunzo-ED')" class="btn btn-sm" style="background: #fef08a; color: #854d0e; border: 1px solid #fde047; font-weight: 700;">
-            🛵 Mark All Dunzo-ED
-          </button>
-        </div>
-      </div>
-
       <!-- Chef Prep Totals (Big Numbers) -->
-      <section class="card" style="background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-color: #fdba74;">
+      <section class="card" style="background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-color: #fdba74; margin-bottom: 12px;">
         <h3 style="color: var(--primary); display: flex; align-items: center; justify-content: space-between;">
           <span>👨‍🍳 Chef Prep Totals</span>
           <span id="chefDateLabel" style="font-size: 0.85rem; font-weight: 600; color: var(--secondary);"></span>
@@ -109,13 +99,41 @@
         <div id="chefItemBreakdown" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;"></div>
       </section>
 
-      <!-- Orders Filter Pills -->
-      <div style="display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 4px;">
-        <button class="btn btn-sm btn-secondary active-filter" onclick="filterOrderStatus('ALL')" id="filter-btn-ALL">All (<span id="count-ALL">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('New')" id="filter-btn-New">Yet to Confirm (<span id="count-New">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Confirmed')" id="filter-btn-Confirmed">Confirmed (<span id="count-Confirmed">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Dunzo-ED')" id="filter-btn-Dunzo">Dunzo-ED (<span id="count-Dunzo">0</span>)</button>
-        <button class="btn btn-sm btn-secondary" onclick="filterOrderStatus('Cancelled')" id="filter-btn-Cancelled">Cancelled (<span id="count-Cancelled">0</span>)</button>
+      <!-- Batch Fulfill & Status Actions (Under Chef Prep Totals) -->
+      <div class="card" style="background: #f8fafc; border: 1px dashed var(--border); padding: 12px 14px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+        <span style="font-size: 0.85rem; font-weight: 700; color: var(--secondary);">⚡ Batch Actions for this Date:</span>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button onclick="batchUpdateOrders('Confirmed', 'New')" class="btn btn-primary btn-sm" style="font-weight: 700;">
+            ✨ Mark All Confirm
+          </button>
+          <button onclick="batchUpdateOrders('Dunzo-ED')" class="btn btn-sm" style="background: #fef08a; color: #854d0e; border: 1px solid #fde047; font-weight: 700;">
+            🛵 Mark All Dunzo-ED
+          </button>
+        </div>
+      </div>
+
+      <!-- Segmented Orders Filter Tabs -->
+      <div class="filter-tab-bar">
+        <button type="button" class="filter-tab-pill active" onclick="filterOrderStatus('ALL')" id="filter-btn-ALL">
+          <span>All</span>
+          <span class="tab-badge" id="count-ALL">0</span>
+        </button>
+        <button type="button" class="filter-tab-pill" onclick="filterOrderStatus('New')" id="filter-btn-New">
+          <span>Yet to Confirm</span>
+          <span class="tab-badge" id="count-New">0</span>
+        </button>
+        <button type="button" class="filter-tab-pill" onclick="filterOrderStatus('Confirmed')" id="filter-btn-Confirmed">
+          <span>Confirmed</span>
+          <span class="tab-badge" id="count-Confirmed">0</span>
+        </button>
+        <button type="button" class="filter-tab-pill" onclick="filterOrderStatus('Dunzo-ED')" id="filter-btn-Dunzo">
+          <span>Dunzo-ED</span>
+          <span class="tab-badge" id="count-Dunzo">0</span>
+        </button>
+        <button type="button" class="filter-tab-pill" onclick="filterOrderStatus('Cancelled')" id="filter-btn-Cancelled">
+          <span>Cancelled</span>
+          <span class="tab-badge" id="count-Cancelled">0</span>
+        </button>
       </div>
 
       <!-- Orders List -->
@@ -254,11 +272,11 @@
       <div class="metrics-grid">
         <div class="metric-card">
           <div class="metric-num" id="finConfirmedIncome" style="color: var(--success);">₹0</div>
-          <div class="metric-label">Confirmed Income</div>
+          <div class="metric-label">Actual Income</div>
         </div>
         <div class="metric-card">
           <div class="metric-num" id="finExpectedIncome" style="color: var(--info);">₹0</div>
-          <div class="metric-label">Expected Income</div>
+          <div class="metric-label">Pending / New</div>
         </div>
         <div class="metric-card">
           <div class="metric-num" id="finTotalExpenses" style="color: var(--danger);">₹0</div>
@@ -291,6 +309,7 @@
               <label for="expCategory">Category *</label>
               <select id="expCategory" required>
                 <option value="ingredients">Ingredients (Chicken, Rice, Spices, Ghee)</option>
+                <option value="wastage">⚠️ Wastage / Spillage (Spoiled food, burnt pot, dropped box)</option>
                 <option value="packaging">Packaging (Boxes, Pouches, Tape)</option>
                 <option value="gas">Gas / Utilities</option>
                 <option value="delivery">Delivery / Fuel</option>
@@ -302,8 +321,8 @@
               <input type="number" id="expAmount" step="0.01" min="1" required placeholder="e.g. 850">
             </div>
             <div class="form-group">
-              <label for="expNote">Note</label>
-              <input type="text" id="expNote" placeholder="e.g. 5kg Basmati Rice from Mandi">
+              <label for="expNote">Note / Description</label>
+              <input type="text" id="expNote" placeholder="e.g. 2 portions burnt, dropped salan box, rice spoilage">
             </div>
             <button type="submit" class="btn btn-danger btn-sm btn-block">Add Expense</button>
           </form>

@@ -456,6 +456,65 @@ textarea {
   border-bottom-color: var(--primary);
 }
 
+/* Segmented Filter Tab Bar (Orders Dashboard) */
+.filter-tab-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin-bottom: 14px;
+  padding: 4px;
+  background: #e2e8f0;
+  border-radius: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.filter-tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--secondary);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.filter-tab-pill:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.filter-tab-pill.active {
+  background: white;
+  color: var(--primary);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-weight: 700;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #cbd5e1;
+  color: var(--secondary);
+}
+
+.filter-tab-pill.active .tab-badge {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
 /* Order Item in Dashboard */
 .order-card {
   background: white;

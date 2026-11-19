@@ -127,7 +127,13 @@ function refreshCurrentTab() {
 }
 
 async function loadInitialData() {
-  await Promise.all([loadSettings(), loadMembers(), loadMenu(), loadOrders()]);
+  await Promise.all([
+    loadSettings(),
+    loadMembers(),
+    loadMenu(),
+    loadOrders(),
+    apiFetch('/api/team/service-days').then(d => { serviceDays = d; }).catch(() => {})
+  ]);
 }
 
 function setTodayDate() {
@@ -137,6 +143,36 @@ function setTodayDate() {
   const dd = String(now.getDate()).padStart(2, '0');
   const todayStr = `${yyyy}-${mm}-${dd}`;
   document.getElementById('orderDateFilter').value = todayStr;
+}
+
+async function goToNextServiceDay() {
+  if (!serviceDays || serviceDays.length === 0) {
+    try {
+      serviceDays = await apiFetch('/api/team/service-days');
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+
+  const openFutureDays = (serviceDays || [])
+    .filter(d => (d.open === 1 || d.open === true) && d.date >= todayStr)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (openFutureDays.length > 0) {
+    const current = document.getElementById('orderDateFilter').value;
+    let nextDay = openFutureDays.find(d => d.date > current);
+    if (!nextDay) nextDay = openFutureDays[0];
+    document.getElementById('orderDateFilter').value = nextDay.date;
+    loadOrders();
+    showAlert(`Switched to: ${nextDay.date}`);
+  } else {
+    showAlert('No upcoming open service days found. You can open a date in the Calendar tab.', 'warning');
+  }
 }
 
 // Polling (auto-refresh every 30s)
@@ -212,11 +248,11 @@ async function loadOrders(silent = false) {
 
 function filterOrderStatus(status) {
   currentStatusFilter = status;
-  document.querySelectorAll('[id^="filter-btn-"]').forEach(btn => btn.classList.remove('btn-primary'));
+  document.querySelectorAll('.filter-tab-pill').forEach(btn => btn.classList.remove('active'));
   let btnId = `filter-btn-${status}`;
   if (status === 'Dunzo-ED') btnId = 'filter-btn-Dunzo';
   const activeBtn = document.getElementById(btnId);
-  if (activeBtn) activeBtn.classList.add('btn-primary');
+  if (activeBtn) activeBtn.classList.add('active');
   renderOrders();
 }
 
@@ -1021,10 +1057,19 @@ async function loadFinances() {
       Object.entries(breakdown).forEach(([cat, amt]) => {
         const pill = document.createElement('span');
         pill.className = 'badge';
-        pill.style.background = '#fee2e2';
-        pill.style.color = '#b91c1c';
-        pill.style.fontSize = '0.85rem';
-        pill.textContent = `${cat.toUpperCase()}: ₹${amt}`;
+        if (cat === 'wastage') {
+          pill.style.background = '#fef3c7';
+          pill.style.color = '#b45309';
+          pill.style.border = '1px solid #fde68a';
+          pill.style.fontSize = '0.85rem';
+          pill.style.fontWeight = '700';
+          pill.textContent = `⚠️ WASTAGE: ₹${amt}`;
+        } else {
+          pill.style.background = '#fee2e2';
+          pill.style.color = '#b91c1c';
+          pill.style.fontSize = '0.85rem';
+          pill.textContent = `${cat.toUpperCase()}: ₹${amt}`;
+        }
         pillsContainer.appendChild(pill);
       });
     }
@@ -1038,10 +1083,15 @@ async function loadFinances() {
     } else {
       expenses.forEach(e => {
         const tr = document.createElement('tr');
+        const isWastage = e.category === 'wastage';
+        const badgeStyle = isWastage
+          ? 'background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-weight:700;'
+          : 'background:#fee2e2; color:#b91c1c;';
+        const catLabel = isWastage ? '⚠️ wastage' : e.category;
         tr.innerHTML = `
           <td>${e.date}</td>
-          <td><span class="badge" style="background:#fee2e2; color:#b91c1c;">${e.category}</span></td>
-          <td><strong>₹${e.amount}</strong></td>
+          <td><span class="badge" style="${badgeStyle}">${catLabel}</span></td>
+          <td><strong style="${isWastage ? 'color:#b45309;' : ''}">₹${e.amount}</strong></td>
           <td>${e.note || ''}</td>
           <td><button class="btn btn-outline-danger btn-sm" onclick="deleteExpense(${e.id})">Delete</button></td>
         `;
