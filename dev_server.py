@@ -71,6 +71,11 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             ])
             return
 
+        # Feedback page route: /feedback
+        if path == "/feedback" or path.startswith("/feedback"):
+            self.serve_file(os.path.join(PUBLIC_DIR, "feedback.html"), "text/html")
+            return
+
         # Static assets
         if not path.startswith("/api"):
             rel_path = path.lstrip("/") or "index.html"
@@ -102,10 +107,41 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # Public GET /api/settings
             if path == "/api/settings":
                 cur = conn.cursor()
-                cur.execute("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template')")
+                cur.execute("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template', 'whatsapp_feedback_template')")
                 rows = cur.fetchall()
                 data = {r["key"]: r["value"] for r in rows}
                 self.send_json(data)
+                return
+
+            # Public GET /api/feedback/order?order_no=...
+            if path == "/api/feedback/order":
+                order_no = (query.get("order_no", [""])[0]).strip()
+                if not order_no:
+                    self.send_error_json("Order number is required")
+                    return
+                cur = conn.cursor()
+                cur.execute("SELECT id, order_no, service_date, customer_name, phone, status, total, total_portions FROM orders WHERE order_no = ?", (order_no,))
+                order = cur.fetchone()
+                if not order:
+                    self.send_error_json("Order not found", 404)
+                    return
+                cur.execute("SELECT item_name, qty FROM order_items WHERE order_id = ?", (order["id"],))
+                items = [f"{it['qty']}x {it['item_name']}" for it in cur.fetchall()]
+                cur.execute("SELECT rating_biryani, rating_accompaniments, rating_packaging, comments, created_at FROM order_feedback WHERE order_id = ?", (order["id"],))
+                fb = cur.fetchone()
+                self.send_json({
+                    "success": True,
+                    "order": {
+                        "id": order["id"],
+                        "order_no": order["order_no"],
+                        "customer_name": order["customer_name"],
+                        "service_date": order["service_date"],
+                        "total": order["total"],
+                        "total_portions": order["total_portions"],
+                        "items": items
+                    },
+                    "feedback": dict(fb) if fb else None
+                })
                 return
 
             # Public GET /api/menu
@@ -189,6 +225,9 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                     cur.execute("SELECT item_id, item_name, unit_price, qty FROM order_items WHERE order_id = ?", (o["id"],))
                     items = [dict(it) for it in cur.fetchall()]
                     o["items"] = items
+                    cur.execute("SELECT rating_biryani, rating_accompaniments, rating_packaging, comments, created_at FROM order_feedback WHERE order_id = ?", (o["id"],))
+                    fb = cur.fetchone()
+                    o["feedback"] = dict(fb) if fb else None
                     o["over_limit"] = bool(o["over_limit"])
                     status_counts[o["status"]] = status_counts.get(o["status"], 0) + 1
 
@@ -206,6 +245,37 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                         "total_active_orders": total_active_orders,
                         "item_totals": item_totals,
                         "status_counts": status_counts
+                    }
+                })
+                return
+
+            # Team GET /api/team/feedback
+            if path == "/api/team/feedback":
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT f.id, f.order_id, f.order_no, f.customer_name, f.phone, f.rating_biryani, f.rating_accompaniments, f.rating_packaging, f.comments, f.created_at, o.service_date
+                    FROM order_feedback f
+                    LEFT JOIN orders o ON f.order_id = o.id
+                    ORDER BY f.created_at DESC, f.id DESC
+                    LIMIT 200
+                """)
+                reviews = [dict(r) for r in cur.fetchall()]
+                total = len(reviews)
+                sum_biryani = sum(r["rating_biryani"] for r in reviews)
+                sum_acc = sum(r["rating_accompaniments"] for r in reviews)
+                sum_pack = sum(r["rating_packaging"] for r in reviews)
+                avg_biryani = f"{(sum_biryani / total):.1f}" if total > 0 else "0.0"
+                avg_acc = f"{(sum_acc / total):.1f}" if total > 0 else "0.0"
+                avg_pack = f"{(sum_pack / total):.1f}" if total > 0 else "0.0"
+                overall_avg = f"{((sum_biryani + sum_acc + sum_pack) / (total * 3)):.1f}" if total > 0 else "0.0"
+                self.send_json({
+                    "reviews": reviews,
+                    "summary": {
+                        "total_reviews": total,
+                        "overall_avg": overall_avg,
+                        "avg_biryani": avg_biryani,
+                        "avg_accompaniments": avg_acc,
+                        "avg_packaging": avg_pack
                     }
                 })
                 return
@@ -396,6 +466,42 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                     "whatsapp_number": settings_map.get("whatsapp_number", ""),
                     "payment_note": settings_map.get("payment_note", "")
                 }, 201)
+                return
+
+            # Public POST /api/feedback
+            if path == "/api/feedback":
+                order_no = (body.get("order_no") or "").strip()
+                try:
+                    r_biryani = int(body.get("rating_biryani", 0))
+                    r_acc = int(body.get("rating_accompaniments", 0))
+                    r_pack = int(body.get("rating_packaging", 0))
+                except (ValueError, TypeError):
+                    self.send_error_json("Invalid ratings")
+                    return
+                comments = (body.get("comments") or "").strip()
+                if not order_no: return self.send_error_json("Order number is required")
+                if not (1 <= r_biryani <= 5): return self.send_error_json("Please rate Biryani (1-5 stars)")
+                if not (1 <= r_acc <= 5): return self.send_error_json("Please rate Accompaniments (1-5 stars)")
+                if not (1 <= r_pack <= 5): return self.send_error_json("Please rate Packaging (1-5 stars)")
+
+                cur = conn.cursor()
+                cur.execute("SELECT id, order_no, customer_name, phone FROM orders WHERE order_no = ?", (order_no,))
+                order = cur.fetchone()
+                if not order:
+                    return self.send_error_json("Order not found", 404)
+
+                cur.execute("""
+                    INSERT INTO order_feedback (order_id, order_no, customer_name, phone, rating_biryani, rating_accompaniments, rating_packaging, comments, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(order_id) DO UPDATE SET
+                        rating_biryani = excluded.rating_biryani,
+                        rating_accompaniments = excluded.rating_accompaniments,
+                        rating_packaging = excluded.rating_packaging,
+                        comments = excluded.comments,
+                        created_at = datetime('now')
+                """, (order["id"], order["order_no"], order["customer_name"], order["phone"], r_biryani, r_acc, r_pack, comments))
+                conn.commit()
+                self.send_json({"success": True, "message": "Thank you so much! Your feedback has been received."})
                 return
 
             # Team POST /api/team/menu
@@ -628,7 +734,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # PUT /api/team/settings
             if path == "/api/team/settings":
                 cur = conn.cursor()
-                for key in ["brand_name", "whatsapp_number", "payment_note", "whatsapp_template"]:
+                for key in ["brand_name", "whatsapp_number", "payment_note", "whatsapp_template", "whatsapp_feedback_template"]:
                     if key in body:
                         cur.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(body[key])))
                 conn.commit()

@@ -79,6 +79,20 @@ CREATE TABLE IF NOT EXISTS income_entries (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS order_feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL UNIQUE,
+  order_no TEXT NOT NULL,
+  customer_name TEXT,
+  phone TEXT,
+  rating_biryani INTEGER NOT NULL,
+  rating_accompaniments INTEGER NOT NULL,
+  rating_packaging INTEGER NOT NULL,
+  comments TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -88,6 +102,8 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE INDEX IF NOT EXISTS idx_orders_service_date ON orders(service_date);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_feedback_order_no ON order_feedback(order_no);
+CREATE INDEX IF NOT EXISTS idx_order_feedback_created_at ON order_feedback(created_at);
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
 CREATE INDEX IF NOT EXISTS idx_income_date ON income_entries(date);
 
@@ -102,3 +118,10 @@ INSERT OR IGNORE INTO team_members (id, name) VALUES (3, 'Delivery');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('brand_name', 'DumCraft');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('whatsapp_number', '919876543210');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('payment_note', 'Payment: Cash on Delivery or UPI on delivery. We will contact you on WhatsApp with order confirmation and payment details.');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('whatsapp_feedback_template', 'Hi {name}, thank you for ordering with DumCraft today! 🍗✨
+
+We hope you enjoyed your Biryani! We''d love 30 seconds of your feedback so Chef and team can make your next meal even better:
+👉 {feedback_url}
+
+Thank you,
+Team DumCraft');

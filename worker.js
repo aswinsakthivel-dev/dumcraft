@@ -10,7 +10,13 @@ export default {
       return onRequest({ request, env, params: {}, ctx });
     }
 
-    // 2. Team dashboard route (/team or /team/<key>)
+    // 2. Feedback route (/feedback or /feedback?order=...)
+    if (url.pathname === '/feedback' || url.pathname.startsWith('/feedback')) {
+      const assetUrl = new URL('/feedback.html' + url.search, url.origin);
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
+
+    // 3. Team dashboard route (/team or /team/<key>)
     if (url.pathname === '/team' || url.pathname.startsWith('/team/')) {
       // Fetch the static team.html from assets
       const assetUrl = new URL('/team.html', url.origin);

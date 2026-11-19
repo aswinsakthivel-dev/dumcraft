@@ -239,7 +239,46 @@ def run_in_process_tests():
     assert fin_res["confirmed_income"] > 0
     print(f"✓ Finances: Confirmed Income ₹{fin_res['confirmed_income']}, Expenses ₹{fin_res['total_expenses']}, Profit ₹{fin_res['profit']}")
 
-    print("\n🎉 ALL 10 IN-PROCESS TEST SUITES PASSED FLAWLESSLY!")
+    # 11. Customer Feedback & Review System
+    # Lookup order for feedback
+    order_no_to_review = o1["order_no"]
+    status, fb_lookup = execute_request("GET", f"/api/feedback/order?order_no={order_no_to_review}")
+    assert status == 200, f"Expected 200, got {status}: {fb_lookup}"
+    assert fb_lookup["order"]["order_no"] == order_no_to_review
+    assert fb_lookup["feedback"] is None, "Expected no initial feedback"
+    print(f"✓ Feedback: Pre-filled order details loaded ({fb_lookup['order']['customer_name']})")
+
+    # Submit review (Biryani: 5, Accompaniments: 4, Packaging: 5)
+    status, fb_submit = execute_request("POST", "/api/feedback", body={
+        "order_no": order_no_to_review,
+        "rating_biryani": 5,
+        "rating_accompaniments": 4,
+        "rating_packaging": 5,
+        "comments": "Super aromatic and succulent chicken! Salan was delicious."
+    })
+    assert status == 200 and fb_submit["success"] is True
+    print("✓ Feedback: Rating and comments submitted successfully")
+
+    # Verify review in team feedback endpoint
+    status, team_fb = execute_request("GET", "/api/team/feedback", headers={"X-Team-Key": TEAM_KEY})
+    assert status == 200
+    assert team_fb["summary"]["total_reviews"] == 1
+    assert team_fb["summary"]["avg_biryani"] == "5.0"
+    assert team_fb["summary"]["avg_accompaniments"] == "4.0"
+    assert team_fb["summary"]["avg_packaging"] == "5.0"
+    assert len(team_fb["reviews"]) == 1
+    assert team_fb["reviews"][0]["order_no"] == order_no_to_review
+    print(f"✓ Team Feedback Hub: Overall {team_fb['summary']['overall_avg']}/5 (Biryani: {team_fb['summary']['avg_biryani']}, Salan: {team_fb['summary']['avg_accompaniments']}, Packaging: {team_fb['summary']['avg_packaging']})")
+
+    # Verify review is attached directly to order card in team orders
+    status, dash_with_fb = execute_request("GET", f"/api/team/orders?date={test_date}", headers={"X-Team-Key": TEAM_KEY})
+    assert status == 200
+    reviewed_order = [o for o in dash_with_fb["orders"] if o["order_no"] == order_no_to_review][0]
+    assert reviewed_order.get("feedback") is not None
+    assert reviewed_order["feedback"]["rating_biryani"] == 5
+    print(f"✓ Order Card Integration: Customer review attached directly to {order_no_to_review}")
+
+    print("\n🎉 ALL 11 IN-PROCESS TEST SUITES PASSED FLAWLESSLY!")
 
 if __name__ == "__main__":
     run_in_process_tests()

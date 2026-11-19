@@ -33,6 +33,17 @@ def test_static_files():
     assert "initTeam" in body, "JS content missing"
     print("✓ GET /team.js served successfully")
 
+    # 5. Feedback Page: GET /feedback & GET /feedback.html
+    status, body = execute_request("GET", "/feedback")
+    assert status == 200, f"Failed GET /feedback: {status}"
+    assert "Customer Feedback" in body, "Feedback page missing title"
+    print("✓ GET /feedback served successfully")
+
+    status, body = execute_request("GET", "/feedback.html")
+    assert status == 200, f"Failed GET /feedback.html: {status}"
+    assert "star-btn" in body, "Star rating component missing in feedback.html"
+    print("✓ GET /feedback.html served successfully")
+
     print("\n🎉 ALL STATIC FILES VERIFIED!")
 
 if __name__ == "__main__":

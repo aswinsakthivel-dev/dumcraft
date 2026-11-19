@@ -108,7 +108,7 @@ function switchTab(tab) {
   if (activeContent) activeContent.style.display = 'block';
 
   const tabButtons = document.querySelectorAll('.tab-btn');
-  const tabNames = ['orders', 'calendar', 'menu', 'tasks', 'finances', 'settings'];
+  const tabNames = ['orders', 'calendar', 'menu', 'tasks', 'finances', 'feedback', 'settings'];
   const idx = tabNames.indexOf(tab);
   if (idx !== -1 && tabButtons[idx]) {
     tabButtons[idx].classList.add('active');
@@ -123,6 +123,7 @@ function refreshCurrentTab() {
   else if (currentTab === 'menu') loadMenu();
   else if (currentTab === 'tasks') loadTasks();
   else if (currentTab === 'finances') loadFinances();
+  else if (currentTab === 'feedback') loadFeedback();
   else if (currentTab === 'settings') loadSettings();
 }
 
@@ -396,6 +397,29 @@ function renderOrders() {
 
     const encodedAddr = encodeURIComponent(o.address || '');
 
+    // Feedback banner if review already received
+    let feedbackBannerHtml = '';
+    if (o.feedback) {
+      const avg = ((o.feedback.rating_biryani + o.feedback.rating_accompaniments + o.feedback.rating_packaging) / 3).toFixed(1);
+      feedbackBannerHtml = `
+        <div style="margin-top:8px; padding:8px 10px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:0.85rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <strong style="color:#b45309; display:flex; align-items:center; gap:4px;">
+              <span>⭐ Customer Review:</span>
+              <span class="badge" style="background:#fef3c7; color:#92400e; font-size:0.75rem;">⭐ ${avg}/5</span>
+            </strong>
+            <span style="font-size:0.75rem; color:#92400e;">${new Date(o.feedback.created_at).toLocaleDateString('en-IN')}</span>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; font-size:0.8rem; margin-bottom:4px;">
+            <span>🍗 Biryani: <strong>${o.feedback.rating_biryani}★</strong></span>
+            <span>🥣 Salan: <strong>${o.feedback.rating_accompaniments}★</strong></span>
+            <span>📦 Packaging: <strong>${o.feedback.rating_packaging}★</strong></span>
+          </div>
+          ${o.feedback.comments ? `<div style="font-style:italic; color:#78350f; background:rgba(255,255,255,0.7); padding:4px 8px; border-radius:4px; margin-top:4px;">"${o.feedback.comments}"</div>` : ''}
+        </div>
+      `;
+    }
+
     card.innerHTML = `
       <div class="order-header">
         <div>
@@ -435,7 +459,9 @@ function renderOrders() {
         </div>
       </div>
 
-      <!-- Simple 4 Clickable Action Buttons -->
+      ${feedbackBannerHtml}
+
+      <!-- Status & WhatsApp Action Buttons -->
       <div class="order-status-actions" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:8px; border-top:1px solid var(--border);">
         ${o.status === 'New' ? `
           <button class="btn btn-primary btn-sm" onclick="updateOrderStatus(${o.id}, 'Confirmed')" style="font-weight:700;">
@@ -458,6 +484,22 @@ function renderOrders() {
             🔄 Reopen Order
           </button>
         `}
+
+        <!-- WhatsApp Feedback Trigger Button -->
+        ${o.feedback ? `
+          <button type="button" class="btn btn-sm" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-weight:700; padding:4px 8px;" onclick="switchTab('feedback')">
+            ✅ Feedback Received
+          </button>
+        ` : `
+          <button type="button" class="btn btn-sm" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-weight:700; padding:4px 8px;" onclick="sendWaFeedback(${o.id})" title="Send customer WhatsApp feedback request">
+            ⭐ Ask Feedback
+          </button>
+        `}
+
+        <!-- Full WhatsApp Message Actions Modal Trigger -->
+        <button type="button" class="btn btn-secondary btn-sm" style="font-weight:600; padding:4px 8px;" onclick="openWaModal(${o.id})" title="Message customer on WhatsApp">
+          💬 WhatsApp
+        </button>
       </div>
     `;
 
@@ -604,6 +646,107 @@ function exportOrdersCSV() {
   a.download = `dumcraft-orders-${dateVal}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ==========================================
+// WHATSAPP TRIGGER & FEEDBACK REQUESTS
+// ==========================================
+let currentWaOrderId = null;
+let appSettings = {};
+
+function sendWaFeedback(orderId) {
+  const o = ordersData.find(x => x.id === orderId);
+  if (!o) return;
+  const phoneClean = (o.phone || '').replace(/[^0-9]/g, '');
+  if (!phoneClean) {
+    showAlert('Customer has no phone number recorded', 'warning');
+    return;
+  }
+
+  // Construct personalized feedback link
+  const origin = window.location.origin;
+  const feedbackUrl = `${origin}/feedback?order=${encodeURIComponent(o.order_no)}`;
+
+  let template = (appSettings && appSettings.whatsapp_feedback_template)
+    ? appSettings.whatsapp_feedback_template
+    : `Hi {name}, thank you for ordering with DumCraft today! 🍗✨\n\nWe hope you enjoyed your Biryani! We'd love 30 seconds of your feedback so Chef and team can make your next meal even better:\n👉 {feedback_url}\n\nThank you,\nTeam DumCraft`;
+
+  const msg = template
+    .replace(/{name}/g, o.customer_name || 'there')
+    .replace(/{order_no}/g, o.order_no)
+    .replace(/{feedback_url}/g, feedbackUrl)
+    .replace(/{date}/g, o.service_date);
+
+  const waUrl = `https://wa.me/91${phoneClean}?text=${encodeURIComponent(msg)}`;
+  window.open(waUrl, '_blank');
+  showAlert(`Opened WhatsApp feedback request for ${o.customer_name}!`);
+}
+
+function openWaModal(orderId) {
+  const o = ordersData.find(x => x.id === orderId);
+  if (!o) return;
+  currentWaOrderId = orderId;
+
+  document.getElementById('waModalCustomer').textContent = o.customer_name;
+  document.getElementById('waModalPhone').textContent = o.phone || 'No phone';
+  document.getElementById('waModalOrderNo').textContent = o.order_no;
+  const itemsText = (o.items || []).map(it => `${it.qty}x ${it.item_name}`).join(', ');
+  document.getElementById('waModalItems').textContent = itemsText || 'Dum Biryani';
+
+  document.getElementById('waActionModal').style.display = 'flex';
+}
+
+function closeWaModal() {
+  document.getElementById('waActionModal').style.display = 'none';
+  currentWaOrderId = null;
+}
+
+function sendWaFeedbackFromModal() {
+  if (currentWaOrderId) {
+    sendWaFeedback(currentWaOrderId);
+    closeWaModal();
+  }
+}
+
+function sendWaDeliveryFromModal() {
+  const o = ordersData.find(x => x.id === currentWaOrderId);
+  if (!o) return;
+  const phoneClean = (o.phone || '').replace(/[^0-9]/g, '');
+  if (!phoneClean) return;
+
+  const itemsText = (o.items || []).map(it => `${it.qty}x ${it.item_name}`).join(', ');
+  const isPaid = (o.notes && o.notes.includes('[PAID]'));
+  const payNotice = isPaid ? '✅ Payment already received. Thank you!' : `Please keep ₹${o.total} ready (Cash or UPI) on arrival.`;
+
+  const msg = `Hi ${o.customer_name}, your DumCraft order #${o.order_no} is OUT FOR DELIVERY! 🛵💨\n\nItems: ${itemsText}\nTotal: ₹${o.total}\n${payNotice}\n\nOur delivery rider is on the way. Enjoy your meal! 🍗✨`;
+  
+  window.open(`https://wa.me/91${phoneClean}?text=${encodeURIComponent(msg)}`, '_blank');
+  closeWaModal();
+  showAlert(`Opened Out for Delivery WhatsApp alert for ${o.customer_name}!`);
+}
+
+function sendWaConfirmedFromModal() {
+  const o = ordersData.find(x => x.id === currentWaOrderId);
+  if (!o) return;
+  const phoneClean = (o.phone || '').replace(/[^0-9]/g, '');
+  if (!phoneClean) return;
+
+  const itemsText = (o.items || []).map(it => `${it.qty}x ${it.item_name}`).join(', ');
+  const msg = `Hi ${o.customer_name}! Your DumCraft order #${o.order_no} for ${o.service_date} is CONFIRMED! 👨‍🍳🔥\n\nItems: ${itemsText}\nTotal: ₹${o.total}\n\nWe will freshly cook and pack your dum biryani on ${o.service_date}. Thank you for ordering with us!`;
+
+  window.open(`https://wa.me/91${phoneClean}?text=${encodeURIComponent(msg)}`, '_blank');
+  closeWaModal();
+  showAlert(`Opened Order Confirmation WhatsApp alert for ${o.customer_name}!`);
+}
+
+function sendWaDirectChat() {
+  const o = ordersData.find(x => x.id === currentWaOrderId);
+  if (!o) return;
+  const phoneClean = (o.phone || '').replace(/[^0-9]/g, '');
+  if (phoneClean) {
+    window.open(`https://wa.me/91${phoneClean}`, '_blank');
+  }
+  closeWaModal();
 }
 
 // Manual Order Modal
@@ -1160,15 +1303,82 @@ async function saveIncome(e) {
 }
 
 // ==========================================
+// CUSTOMER FEEDBACK & REVIEWS
+// ==========================================
+async function loadFeedback() {
+  const listEl = document.getElementById('feedbackList');
+  listEl.innerHTML = '<div class="muted" style="text-align:center; padding:24px;">Loading customer reviews...</div>';
+
+  try {
+    const data = await apiFetch('/api/team/feedback');
+    const summary = data.summary || {};
+    document.getElementById('fbAvgOverall').textContent = `⭐ ${summary.overall_avg || '0.0'}`;
+    document.getElementById('fbAvgBiryani').textContent = `🍗 ${summary.avg_biryani || '0.0'}`;
+    document.getElementById('fbAvgAccompaniments').textContent = `🥣 ${summary.avg_accompaniments || '0.0'}`;
+    document.getElementById('fbAvgPackaging').textContent = `📦 ${summary.avg_packaging || '0.0'}`;
+    document.getElementById('fbTotalCount').textContent = summary.total_reviews || 0;
+
+    const reviews = data.reviews || [];
+    if (reviews.length === 0) {
+      listEl.innerHTML = '<div class="muted" style="text-align:center; padding:24px;">No reviews received yet. Use the "⭐ Ask Feedback" button on any order to request a review!</div>';
+      return;
+    }
+
+    listEl.innerHTML = '';
+    reviews.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.cssText = 'padding:14px; margin-bottom:12px; border-left:4px solid #f59e0b; background:#fff;';
+
+      const phoneClean = (r.phone || '').replace(/[^0-9]/g, '');
+      const thanksMsg = `Hi ${r.customer_name}! Thank you so much for your kind review and rating of DumCraft Biryani. We really appreciate your feedback! 🍗✨`;
+      const waThanksUrl = phoneClean ? `https://wa.me/91${phoneClean}?text=${encodeURIComponent(thanksMsg)}` : '#';
+
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+          <div>
+            <span style="font-weight:700; font-size:1rem; color:var(--secondary);">${r.customer_name}</span>
+            <span style="font-size:0.8rem; color:var(--text-muted); margin-left:6px;">(${r.order_no})</span>
+            ${r.service_date ? `<span class="badge" style="background:#ffedd5; color:#c2410c; margin-left:6px; font-size:0.75rem;">${r.service_date}</span>` : ''}
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">${new Date(r.created_at).toLocaleDateString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}</span>
+            ${phoneClean ? `<a href="${waThanksUrl}" target="_blank" class="btn btn-sm" style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-size:0.75rem; font-weight:700; padding:2px 8px;">💬 Say Thanks</a>` : ''}
+          </div>
+        </div>
+
+        <div style="display:flex; gap:12px; flex-wrap:wrap; font-size:0.88rem; margin-bottom:8px; background:#f8fafc; padding:8px 10px; border-radius:6px; border:1px solid var(--border);">
+          <span>🍗 Biryani: <strong style="color:#b45309;">${'★'.repeat(r.rating_biryani)}${'☆'.repeat(5 - r.rating_biryani)} (${r.rating_biryani}/5)</strong></span>
+          <span>🥣 Accompaniments: <strong style="color:#0284c7;">${'★'.repeat(r.rating_accompaniments)}${'☆'.repeat(5 - r.rating_accompaniments)} (${r.rating_accompaniments}/5)</strong></span>
+          <span>📦 Packaging: <strong style="color:#059669;">${'★'.repeat(r.rating_packaging)}${'☆'.repeat(5 - r.rating_packaging)} (${r.rating_packaging}/5)</strong></span>
+        </div>
+
+        ${r.comments ? `
+          <div style="font-size:0.88rem; color:#451a03; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:8px 10px; line-height:1.4;">
+            💬 <strong>Customer Note:</strong> "${r.comments}"
+          </div>
+        ` : '<div style="font-size:0.8rem; color:var(--text-muted); font-style:italic;">No written comments provided.</div>'}
+      `;
+      listEl.appendChild(card);
+    });
+
+  } catch (err) {
+    listEl.innerHTML = `<div class="alert alert-danger">Error loading reviews: ${err.message}</div>`;
+  }
+}
+
+// ==========================================
 // SETTINGS & TEAM MEMBERS
 // ==========================================
 async function loadSettings() {
   try {
     const settings = await apiFetch('/api/team/settings');
+    appSettings = settings || {};
     if (settings.brand_name) document.getElementById('settingBrand').value = settings.brand_name;
     if (settings.whatsapp_number) document.getElementById('settingWhatsapp').value = settings.whatsapp_number;
     if (settings.payment_note) document.getElementById('settingPayment').value = settings.payment_note;
     if (settings.whatsapp_template) document.getElementById('settingWaTemplate').value = settings.whatsapp_template;
+    if (settings.whatsapp_feedback_template) document.getElementById('settingWaFeedbackTemplate').value = settings.whatsapp_feedback_template;
   } catch (err) {}
 }
 
@@ -1178,7 +1388,8 @@ async function saveStoreSettings(e) {
     brand_name: document.getElementById('settingBrand').value.trim(),
     whatsapp_number: document.getElementById('settingWhatsapp').value.trim(),
     payment_note: document.getElementById('settingPayment').value.trim(),
-    whatsapp_template: document.getElementById('settingWaTemplate').value.trim()
+    whatsapp_template: document.getElementById('settingWaTemplate').value.trim(),
+    whatsapp_feedback_template: document.getElementById('settingWaFeedbackTemplate').value.trim()
   };
 
   try {
@@ -1186,6 +1397,7 @@ async function saveStoreSettings(e) {
       method: 'PUT',
       body: JSON.stringify(payload)
     });
+    appSettings = { ...appSettings, ...payload };
     showAlert('Settings updated successfully');
   } catch (err) {
     showAlert(`Failed to save settings: ${err.message}`, 'danger');

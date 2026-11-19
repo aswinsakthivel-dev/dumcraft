@@ -35,6 +35,31 @@ function checkRateLimit(ip) {
   return true;
 }
 
+let feedbackTableEnsured = false;
+async function ensureFeedbackTable(db) {
+  if (feedbackTableEnsured) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS order_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL UNIQUE,
+        order_no TEXT NOT NULL,
+        customer_name TEXT,
+        phone TEXT,
+        rating_biryani INTEGER NOT NULL,
+        rating_accompaniments INTEGER NOT NULL,
+        rating_packaging INTEGER NOT NULL,
+        comments TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      )
+    `).run();
+    feedbackTableEnsured = true;
+  } catch (e) {
+    console.error('ensureFeedbackTable error', e);
+  }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -77,7 +102,7 @@ export async function onRequest(context) {
 
     // GET /api/settings - Public store settings
     if (path === '/settings' && method === 'GET') {
-      const rows = await db.prepare("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template')").all();
+      const rows = await db.prepare("SELECT key, value FROM settings WHERE key IN ('brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template', 'whatsapp_feedback_template')").all();
       const settings = {};
       (rows.results || []).forEach(r => { settings[r.key] = r.value; });
       return jsonResponse(settings);
@@ -248,6 +273,76 @@ export async function onRequest(context) {
       }, 201);
     }
 
+    // GET /api/feedback/order?order_no=...
+    if (path === '/feedback/order' && method === 'GET') {
+      await ensureFeedbackTable(db);
+      const orderNo = (url.searchParams.get('order_no') || '').trim();
+      if (!orderNo) {
+        return errorResponse('Order number is required');
+      }
+
+      const order = await db.prepare("SELECT id, order_no, service_date, customer_name, phone, status, total, total_portions FROM orders WHERE order_no = ?").bind(orderNo).first();
+      if (!order) {
+        return errorResponse('Order not found. Please verify your order number.', 404);
+      }
+
+      const itemsRes = await db.prepare("SELECT item_name, qty FROM order_items WHERE order_id = ?").bind(order.id).all();
+      const items = (itemsRes.results || []).map(it => `${it.qty}x ${it.item_name}`);
+
+      const fb = await db.prepare("SELECT rating_biryani, rating_accompaniments, rating_packaging, comments, created_at FROM order_feedback WHERE order_id = ?").bind(order.id).first();
+
+      return jsonResponse({
+        success: true,
+        order: {
+          id: order.id,
+          order_no: order.order_no,
+          customer_name: order.customer_name,
+          service_date: order.service_date,
+          total: order.total,
+          total_portions: order.total_portions,
+          items
+        },
+        feedback: fb || null
+      });
+    }
+
+    // POST /api/feedback - Customer submits rating and comments
+    if (path === '/feedback' && method === 'POST') {
+      await ensureFeedbackTable(db);
+      const body = await request.json();
+      const orderNo = (body.order_no || '').trim();
+      const ratingBiryani = parseInt(body.rating_biryani, 10);
+      const ratingAccompaniments = parseInt(body.rating_accompaniments, 10);
+      const ratingPackaging = parseInt(body.rating_packaging, 10);
+      const comments = (body.comments || '').trim();
+
+      if (!orderNo) return errorResponse('Order number is required');
+      if (isNaN(ratingBiryani) || ratingBiryani < 1 || ratingBiryani > 5) return errorResponse('Please rate Biryani (1-5 stars)');
+      if (isNaN(ratingAccompaniments) || ratingAccompaniments < 1 || ratingAccompaniments > 5) return errorResponse('Please rate Accompaniments (1-5 stars)');
+      if (isNaN(ratingPackaging) || ratingPackaging < 1 || ratingPackaging > 5) return errorResponse('Please rate Packaging (1-5 stars)');
+
+      const order = await db.prepare("SELECT id, order_no, customer_name, phone FROM orders WHERE order_no = ?").bind(orderNo).first();
+      if (!order) {
+        return errorResponse('Order not found', 404);
+      }
+
+      await db.prepare(`
+        INSERT INTO order_feedback (order_id, order_no, customer_name, phone, rating_biryani, rating_accompaniments, rating_packaging, comments, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(order_id) DO UPDATE SET
+          rating_biryani = excluded.rating_biryani,
+          rating_accompaniments = excluded.rating_accompaniments,
+          rating_packaging = excluded.rating_packaging,
+          comments = excluded.comments,
+          created_at = CURRENT_TIMESTAMP
+      `).bind(order.id, order.order_no, order.customer_name, order.phone, ratingBiryani, ratingAccompaniments, ratingPackaging, comments).run();
+
+      return jsonResponse({
+        success: true,
+        message: 'Thank you so much! Your feedback has been received.'
+      });
+    }
+
     // ----------------------------------------------------
     // TEAM AUTHENTICATED ROUTES (/api/team/*)
     // ----------------------------------------------------
@@ -384,9 +479,11 @@ export async function onRequest(context) {
       const ordersRes = bindings.length > 0 ? await stmt.bind(...bindings).all() : await stmt.all();
       const orders = ordersRes.results || [];
 
-      // Attach items to each order
+      // Attach items & feedback to each order
+      await ensureFeedbackTable(db);
       const orderIds = orders.map(o => o.id);
       const itemsMap = new Map();
+      const feedbackMap = new Map();
 
       if (orderIds.length > 0) {
         // D1 handles multiple items query
@@ -395,6 +492,15 @@ export async function onRequest(context) {
           if (!itemsMap.has(it.order_id)) itemsMap.set(it.order_id, []);
           itemsMap.get(it.order_id).push(it);
         });
+
+        try {
+          const fbRes = await db.prepare("SELECT order_id, rating_biryani, rating_accompaniments, rating_packaging, comments, created_at FROM order_feedback WHERE order_id IN (" + orderIds.join(',') + ")").all();
+          (fbRes.results || []).forEach(fb => {
+            feedbackMap.set(fb.order_id, fb);
+          });
+        } catch (e) {
+          // Ignore if empty
+        }
       }
 
       // Chef Totals & Summary for selected date
@@ -405,6 +511,7 @@ export async function onRequest(context) {
 
       orders.forEach(o => {
         o.items = itemsMap.get(o.id) || [];
+        o.feedback = feedbackMap.get(o.id) || null;
         o.over_limit = o.over_limit === 1;
         statusCounts[o.status] = (statusCounts[o.status] || 0) + 1;
 
@@ -703,6 +810,48 @@ export async function onRequest(context) {
       return jsonResponse({ success: true });
     }
 
+    // --- Customer Feedback & Reviews ---
+    // GET /api/team/feedback - Fetch all customer reviews & overall averages
+    if (path === '/team/feedback' && method === 'GET') {
+      await ensureFeedbackTable(db);
+      const rows = await db.prepare(`
+        SELECT f.id, f.order_id, f.order_no, f.customer_name, f.phone, f.rating_biryani, f.rating_accompaniments, f.rating_packaging, f.comments, f.created_at, o.service_date
+        FROM order_feedback f
+        LEFT JOIN orders o ON f.order_id = o.id
+        ORDER BY f.created_at DESC, f.id DESC
+        LIMIT 200
+      `).all();
+
+      const reviews = rows.results || [];
+      const total = reviews.length;
+
+      let sumBiryani = 0;
+      let sumAccompaniments = 0;
+      let sumPackaging = 0;
+
+      reviews.forEach(r => {
+        sumBiryani += Number(r.rating_biryani || 0);
+        sumAccompaniments += Number(r.rating_accompaniments || 0);
+        sumPackaging += Number(r.rating_packaging || 0);
+      });
+
+      const avgBiryani = total > 0 ? (sumBiryani / total).toFixed(1) : '0.0';
+      const avgAccompaniments = total > 0 ? (sumAccompaniments / total).toFixed(1) : '0.0';
+      const avgPackaging = total > 0 ? (sumPackaging / total).toFixed(1) : '0.0';
+      const overallAvg = total > 0 ? (((sumBiryani + sumAccompaniments + sumPackaging) / (total * 3))).toFixed(1) : '0.0';
+
+      return jsonResponse({
+        reviews,
+        summary: {
+          total_reviews: total,
+          overall_avg: overallAvg,
+          avg_biryani: avgBiryani,
+          avg_accompaniments: avgAccompaniments,
+          avg_packaging: avgPackaging
+        }
+      });
+    }
+
     // --- Settings Management ---
     // GET /api/team/settings
     if (path === '/team/settings' && method === 'GET') {
@@ -715,7 +864,7 @@ export async function onRequest(context) {
     // PUT /api/team/settings
     if (path === '/team/settings' && method === 'PUT') {
       const b = await request.json();
-      const allowedKeys = ['brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template'];
+      const allowedKeys = ['brand_name', 'whatsapp_number', 'payment_note', 'whatsapp_template', 'whatsapp_feedback_template'];
       const stmts = [];
 
       for (const key of allowedKeys) {
