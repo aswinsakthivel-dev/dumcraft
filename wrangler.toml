@@ -1,0 +1,11 @@
+name = "dumcraft"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dumcraft-db"
+database_id = "xxxxxx-d1-placeholder"
+
+[vars]
+TEAM_KEY = "dc_secret_team_demo2026"

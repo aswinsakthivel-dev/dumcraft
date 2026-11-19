@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>DumCraft - Authentic Hyderabadi Biryani</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <header>
+    <a href="/" class="brand">
+      <span class="brand-icon">🍲</span>
+      <div>
+        <span id="headerBrandName">DumCraft</span>
+        <span class="brand-subtitle">Cloud Kitchen • Hyderabad</span>
+      </div>
+    </a>
+  </header>
+
+  <main class="container">
+    <!-- Active Order Form View -->
+    <div id="orderView">
+      
+      <!-- Service Day Picker -->
+      <section class="card">
+        <h2>1. Select Service Day</h2>
+        <p class="muted" style="margin-bottom: 10px;">We prepare fresh in small batches on open service days.</p>
+        <div id="daySelector" class="day-selector">
+          <div class="muted">Loading available dates...</div>
+        </div>
+        <div id="dayNotice" class="alert alert-info" style="display: none;"></div>
+      </section>
+
+      <!-- Menu Items -->
+      <section class="card">
+        <h2>2. Choose Items</h2>
+        <div id="menuList">
+          <div class="muted">Loading menu...</div>
+        </div>
+      </section>
+
+      <!-- Customer Details Form -->
+      <section class="card">
+        <h2>3. Delivery Details</h2>
+        <form id="orderForm" onsubmit="submitOrder(event)">
+          <!-- Honeypot -->
+          <input type="text" name="website_hp" id="website_hp" class="hp-field" tabindex="-1" autocomplete="off">
+
+          <div class="form-group">
+            <label for="custName">Your Name *</label>
+            <input type="text" id="custName" required placeholder="e.g. Aswin Kumar" autocomplete="name">
+          </div>
+
+          <div class="form-group">
+            <label for="custPhone">10-Digit Mobile Number *</label>
+            <input type="tel" id="custPhone" required placeholder="e.g. 9876543210" pattern="[6-9][0-9]{9}" maxlength="10" autocomplete="tel">
+            <small class="muted">For delivery updates & WhatsApp confirmation</small>
+          </div>
+
+          <div class="form-group">
+            <label for="custAddress">Delivery Address *</label>
+            <textarea id="custAddress" required placeholder="Flat / House no, Building, Street, Area, Landmark" autocomplete="street-address"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="custNotes">Special Instructions (Optional)</label>
+            <textarea id="custNotes" placeholder="e.g. Less spicy, call on arrival, extra salan"></textarea>
+          </div>
+
+          <!-- Order Summary in Form -->
+          <div class="card" style="background: #f8fafc; border-style: dashed; margin-top: 16px;">
+            <h3>Order Summary</h3>
+            <div id="summaryItems" class="muted" style="margin-bottom: 8px;">No items selected yet</div>
+            <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 1.15rem; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px;">
+              <span>Total Amount:</span>
+              <span id="summaryTotal">₹0</span>
+            </div>
+          </div>
+
+          <div id="formError" class="alert alert-danger" style="display: none; margin-top: 12px;"></div>
+
+          <button type="submit" id="submitBtn" class="btn btn-primary btn-block" style="margin-top: 14px; font-size: 1.1rem; padding: 14px;" disabled>
+            Place Order
+          </button>
+        </form>
+      </section>
+    </div>
+
+    <!-- Confirmation View (Hidden by default) -->
+    <div id="confirmView" style="display: none;">
+      <div class="card" style="text-align: center; padding: 24px 16px;">
+        <div style="font-size: 3.5rem; line-height: 1; margin-bottom: 12px;">🎉</div>
+        <h2 style="color: var(--success); margin-bottom: 6px;">Order Placed Successfully!</h2>
+        <p class="muted" style="margin-bottom: 16px;">Thank you! We have received your order.</p>
+
+        <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; text-align: left; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted">Order Number:</span>
+            <strong id="confOrderNo" style="font-size: 1.05rem; color: var(--primary);"></strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted">Service Date:</span>
+            <strong id="confDate"></strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted">Total Portions:</span>
+            <strong id="confPortions"></strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted">Total Amount:</span>
+            <strong id="confTotal" style="color: var(--secondary);"></strong>
+          </div>
+          <div style="border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px;">
+            <span class="muted" style="display: block; margin-bottom: 4px;">Delivering to:</span>
+            <div id="confAddress" style="font-size: 0.9rem;"></div>
+          </div>
+        </div>
+
+        <!-- Over Limit Notice if applicable -->
+        <div id="confOverLimitAlert" class="alert alert-warning" style="display: none; text-align: left;">
+          ℹ️ Your order was received above our daily limit. Our kitchen team will review and confirm availability shortly via WhatsApp.
+        </div>
+
+        <!-- Payment Note -->
+        <div class="alert alert-info" id="confPaymentNote" style="text-align: left; margin-bottom: 16px;">
+          Payment: Cash on Delivery or UPI on delivery. Our team will contact you on WhatsApp with order confirmation and payment details.
+        </div>
+
+        <!-- WhatsApp Action Button -->
+        <a id="confWhatsAppBtn" href="#" target="_blank" class="btn btn-success btn-block" style="font-size: 1.05rem; padding: 12px; margin-bottom: 10px;">
+          💬 Chat on WhatsApp with Kitchen
+        </a>
+
+        <button onclick="resetOrderForm()" class="btn btn-secondary btn-block">
+          Place Another Order
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // State
+    let menuItems = [];
+    let serviceDays = [];
+    let selectedDate = null;
+    let cart = {}; // itemId -> qty
+    let storeSettings = {};
+
+    // Elements
+    const daySelectorEl = document.getElementById('daySelector');
+    const dayNoticeEl = document.getElementById('dayNotice');
+    const menuListEl = document.getElementById('menuList');
+    const summaryItemsEl = document.getElementById('summaryItems');
+    const summaryTotalEl = document.getElementById('summaryTotal');
+    const submitBtn = document.getElementById('submitBtn');
+    const formErrorEl = document.getElementById('formError');
+
+    // Init
+    async function init() {
+      try {
+        await Promise.all([loadSettings(), loadServiceDays(), loadMenu()]);
+      } catch (err) {
+        console.error('Init error:', err);
+      }
+    }
+
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+          storeSettings = await res.json();
+          if (storeSettings.brand_name) {
+            document.getElementById('headerBrandName').textContent = storeSettings.brand_name;
+            document.title = `${storeSettings.brand_name} - Authentic Hyderabadi Biryani`;
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function loadServiceDays() {
+      try {
+        const res = await fetch('/api/service-days');
+        if (!res.ok) throw new Error('Failed to load days');
+        serviceDays = await res.json();
+        renderServiceDays();
+      } catch (err) {
+        daySelectorEl.innerHTML = '<div class="alert alert-danger">Unable to load service dates. Please try again later.</div>';
+      }
+    }
+
+    function renderServiceDays() {
+      if (!serviceDays || serviceDays.length === 0) {
+        daySelectorEl.innerHTML = '<div class="alert alert-warning">No open service days scheduled at the moment. Please check back soon or message us on WhatsApp!</div>';
+        selectedDate = null;
+        updateOrderSummary();
+        return;
+      }
+
+      daySelectorEl.innerHTML = '';
+      let autoSelect = null;
+
+      serviceDays.forEach((d) => {
+        const pill = document.createElement('div');
+        pill.className = 'day-pill';
+
+        // Format Date: e.g. "Fri, Nov 21"
+        const dateObj = new Date(d.date + 'T12:00:00');
+        const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'short' });
+        const monthDay = dateObj.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+
+        let subText = `${d.remaining_portions} left`;
+        if (d.is_sold_out) {
+          pill.classList.add('disabled');
+          subText = 'Sold out';
+        } else if (d.allow_overflow) {
+          subText = 'Available';
+        }
+
+        pill.innerHTML = `
+          <div class="day-pill-title">${dayName}, ${monthDay}</div>
+          <div class="day-pill-sub">${subText}</div>
+        `;
+
+        if (!d.is_sold_out) {
+          if (!autoSelect) autoSelect = d.date;
+          pill.onclick = () => selectDay(d.date);
+        }
+
+        pill.id = `pill-${d.date}`;
+        daySelectorEl.appendChild(pill);
+      });
+
+      if (autoSelect) {
+        selectDay(autoSelect);
+      }
+    }
+
+    function selectDay(dateStr) {
+      selectedDate = dateStr;
+      document.querySelectorAll('.day-pill').forEach(el => el.classList.remove('active'));
+      const activePill = document.getElementById(`pill-${dateStr}`);
+      if (activePill) activePill.classList.add('active');
+
+      const day = serviceDays.find(d => d.date === dateStr);
+      if (day && day.note) {
+        dayNoticeEl.textContent = `ℹ️ ${day.note}`;
+        dayNoticeEl.style.display = 'block';
+      } else {
+        dayNoticeEl.style.display = 'none';
+      }
+
+      updateOrderSummary();
+    }
+
+    async function loadMenu() {
+      try {
+        const res = await fetch('/api/menu');
+        if (!res.ok) throw new Error('Failed to load menu');
+        menuItems = await res.json();
+        renderMenu();
+      } catch (err) {
+        menuListEl.innerHTML = '<div class="alert alert-danger">Unable to load menu. Please refresh the page.</div>';
+      }
+    }
+
+    function renderMenu() {
+      if (!menuItems || menuItems.length === 0) {
+        menuListEl.innerHTML = '<div class="alert alert-info">Menu items will be updated shortly.</div>';
+        return;
+      }
+
+      menuListEl.innerHTML = '';
+      menuItems.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'menu-card';
+
+        const imgHtml = item.image 
+          ? `<img src="${item.image}" alt="${item.name}" class="menu-img">`
+          : `<div class="menu-img">🍲</div>`;
+
+        const qty = cart[item.id] || 0;
+
+        card.innerHTML = `
+          ${imgHtml}
+          <div class="menu-info">
+            <div class="menu-title">${item.name}</div>
+            ${item.description ? `<div class="menu-desc">${item.description}</div>` : ''}
+            <div class="menu-price">₹${item.price}</div>
+          </div>
+          <div class="qty-control">
+            <button type="button" class="qty-btn" onclick="changeQty(${item.id}, -1)">−</button>
+            <span class="qty-value" id="qty-${item.id}">${qty}</span>
+            <button type="button" class="qty-btn" onclick="changeQty(${item.id}, 1)">+</button>
+          </div>
+        `;
+
+        menuListEl.appendChild(card);
+      });
+    }
+
+    function changeQty(itemId, delta) {
+      const current = cart[itemId] || 0;
+      const next = Math.max(0, current + delta);
+      if (next === 0) {
+        delete cart[itemId];
+      } else {
+        cart[itemId] = next;
+      }
+      const qtyEl = document.getElementById(`qty-${itemId}`);
+      if (qtyEl) qtyEl.textContent = next;
+      updateOrderSummary();
+    }
+
+    function updateOrderSummary() {
+      let totalAmount = 0;
+      let totalPortions = 0;
+      const summaryList = [];
+
+      menuItems.forEach(item => {
+        const qty = cart[item.id] || 0;
+        if (qty > 0) {
+          const itemTotal = item.price * qty;
+          totalAmount += itemTotal;
+          totalPortions += qty;
+          summaryList.push(`<div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span>${item.name} × ${qty}</span>
+            <span>₹${itemTotal}</span>
+          </div>`);
+        }
+      });
+
+      if (summaryList.length === 0) {
+        summaryItemsEl.innerHTML = '<span class="muted">No items selected yet</span>';
+        submitBtn.disabled = true;
+      } else {
+        summaryItemsEl.innerHTML = summaryList.join('');
+        submitBtn.disabled = !selectedDate;
+      }
+
+      summaryTotalEl.textContent = `₹${totalAmount}`;
+    }
+
+    async function submitOrder(e) {
+      e.preventDefault();
+      formErrorEl.style.display = 'none';
+
+      if (!selectedDate) {
+        showError('Please select a service day');
+        return;
+      }
+
+      const items = Object.entries(cart).map(([itemId, qty]) => ({
+        item_id: parseInt(itemId, 10),
+        qty: parseInt(qty, 10)
+      })).filter(i => i.qty > 0);
+
+      if (items.length === 0) {
+        showError('Please add at least one item');
+        return;
+      }
+
+      const payload = {
+        customer_name: document.getElementById('custName').value.trim(),
+        phone: document.getElementById('custPhone').value.trim(),
+        address: document.getElementById('custAddress').value.trim(),
+        notes: document.getElementById('custNotes').value.trim(),
+        service_date: selectedDate,
+        website_hp: document.getElementById('website_hp').value,
+        items
+      };
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Placing Order...';
+
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Failed to place order');
+        }
+
+        showConfirmation(data);
+      } catch (err) {
+        showError(err.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Place Order';
+      }
+    }
+
+    function showError(msg) {
+      formErrorEl.textContent = msg;
+      formErrorEl.style.display = 'block';
+      formErrorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function showConfirmation(order) {
+      document.getElementById('orderView').style.display = 'none';
+      document.getElementById('confirmView').style.display = 'block';
+
+      document.getElementById('confOrderNo').textContent = order.order_no;
+      document.getElementById('confDate').textContent = order.service_date;
+      document.getElementById('confPortions').textContent = `${order.total_portions} portion(s)`;
+      document.getElementById('confTotal').textContent = `₹${order.total}`;
+      document.getElementById('confAddress').textContent = `${order.customer_name} (${order.phone}) \n${order.address}`;
+
+      if (order.over_limit) {
+        document.getElementById('confOverLimitAlert').style.display = 'block';
+      } else {
+        document.getElementById('confOverLimitAlert').style.display = 'none';
+      }
+
+      if (order.payment_note) {
+        document.getElementById('confPaymentNote').textContent = order.payment_note;
+      }
+
+      // WhatsApp Chat link
+      const waNumber = order.whatsapp_number || storeSettings.whatsapp_number || '';
+      if (waNumber) {
+        const cleanNumber = waNumber.replace(/[^0-9]/g, '');
+        const itemsText = order.items.map(it => `${it.qty}x ${it.name}`).join(', ');
+        const msg = `Hi DumCraft! I placed Order #${order.order_no} for ${order.service_date}.\nName: ${order.customer_name}\nItems: ${itemsText}\nTotal: ₹${order.total}.\nPlease confirm!`;
+        const waUrl = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(msg)}`;
+        document.getElementById('confWhatsAppBtn').href = waUrl;
+        document.getElementById('confWhatsAppBtn').style.display = 'inline-flex';
+      } else {
+        document.getElementById('confWhatsAppBtn').style.display = 'none';
+      }
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function resetOrderForm() {
+      cart = {};
+      document.getElementById('orderForm').reset();
+      renderMenu();
+      updateOrderSummary();
+      document.getElementById('confirmView').style.display = 'none';
+      document.getElementById('orderView').style.display = 'block';
+      loadServiceDays();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    init();
+  </script>
+</body>
+</html>
