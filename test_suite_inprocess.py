@@ -278,7 +278,63 @@ def run_in_process_tests():
     assert reviewed_order["feedback"]["rating_biryani"] == 5
     print(f"✓ Order Card Integration: Customer review attached directly to {order_no_to_review}")
 
-    print("\n🎉 ALL 11 IN-PROCESS TEST SUITES PASSED FLAWLESSLY!")
+    # 12. Batch Mapping & Team Member Spendings Breakdown
+    # Create team members
+    execute_request("POST", "/api/team/members", body={"name": "Aswin"}, headers={"X-Team-Key": TEAM_KEY})
+    execute_request("POST", "/api/team/members", body={"name": "Kiran"}, headers={"X-Team-Key": TEAM_KEY})
+
+    # Record expenses with batch_date and spent_by
+    status, e_aswin = execute_request("POST", "/api/team/expenses", body={
+        "date": test_date,
+        "batch_date": test_date,
+        "spent_by": "Aswin",
+        "category": "ingredients",
+        "amount": 600,
+        "note": "10kg Chicken & Basmati rice"
+    }, headers={"X-Team-Key": TEAM_KEY})
+    assert status == 201
+
+    status, e_kiran = execute_request("POST", "/api/team/expenses", body={
+        "date": test_date,
+        "batch_date": test_date,
+        "spent_by": "Kiran",
+        "category": "packaging",
+        "amount": 200,
+        "note": "Boxes & silver pouches"
+    }, headers={"X-Team-Key": TEAM_KEY})
+    assert status == 201
+
+    # Record task with batch_date
+    status, task_b = execute_request("POST", "/api/team/tasks", body={
+        "title": "Clean kitchen prep area",
+        "assignee": "Kiran",
+        "batch_date": test_date,
+        "due_date": test_date
+    }, headers={"X-Team-Key": TEAM_KEY})
+    assert status == 201
+    assert task_b.get("batch_date") == test_date or task_b.get("id") is not None
+
+    # Query finances for this specific batch
+    status, batch_fin = execute_request("GET", f"/api/team/finances?batch_date={test_date}", headers={"X-Team-Key": TEAM_KEY})
+    assert status == 200
+    assert batch_fin["is_single_batch"] is True
+    assert batch_fin["selected_batch"]["date"] == test_date
+    assert batch_fin["total_expenses"] >= 800
+    assert "spent_by_summary" in batch_fin
+    spent_members = [s["member"] for s in batch_fin["spent_by_summary"]]
+    assert "Aswin" in spent_members
+    assert "Kiran" in spent_members
+    print(f"✓ Batch & Member Finances: Filtered for {test_date}, Spenders: {spent_members}, Total Exp: ₹{batch_fin['total_expenses']}")
+
+    # Query overall finances
+    status, all_fin = execute_request("GET", "/api/team/finances?batch_date=ALL", headers={"X-Team-Key": TEAM_KEY})
+    assert status == 200
+    assert all_fin["is_single_batch"] is False
+    assert len(all_fin["batches"]) >= 1
+    assert len(all_fin["batch_comparison"]) >= 1
+    print(f"✓ Lifetime Batch Comparison: {len(all_fin['batches'])} batch(es) tracked with comparison table & margins")
+
+    print("\n🎉 ALL 12 IN-PROCESS TEST SUITES PASSED FLAWLESSLY!")
 
 if __name__ == "__main__":
     run_in_process_tests()

@@ -30,6 +30,19 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+def resolve_batch_name(day, all_days):
+    b_name = day.get("batch_name")
+    if b_name and str(b_name).strip():
+        return str(b_name).strip()
+    if day.get("date") == "2026-11-22":
+        return "Batch 2"
+    sorted_days = sorted(all_days, key=lambda x: x["date"])
+    idx_22 = next((i for i, d in enumerate(sorted_days) if d["date"] == "2026-11-22"), None)
+    this_idx = next((i for i, d in enumerate(sorted_days) if d["date"] == day["date"]), None)
+    if idx_22 is not None and this_idx is not None:
+        return f"Batch {2 + (this_idx - idx_22)}"
+    return f"Batch {(this_idx + 1) if this_idx is not None else 1}"
+
 class DumCraftHandler(BaseHTTPRequestHandler):
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -190,7 +203,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # Team GET /api/team/service-days
             if path == "/api/team/service-days":
                 cur = conn.cursor()
-                cur.execute("SELECT date, open, order_limit, allow_overflow, cutoff_time, note FROM service_days ORDER BY date ASC")
+                cur.execute("SELECT date, open, order_limit, allow_overflow, cutoff_time, note, batch_name FROM service_days ORDER BY date ASC")
                 days = [dict(r) for r in cur.fetchall()]
                 results = []
                 for d in days:
@@ -198,6 +211,7 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                     row = cur.fetchone()
                     results.append({
                         **d,
+                        "batch_name": resolve_batch_name(d, days),
                         "open": bool(d["open"]),
                         "allow_overflow": bool(d["allow_overflow"]),
                         "booked_portions": row["booked"],
@@ -283,7 +297,11 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # Team GET /api/team/tasks
             if path == "/api/team/tasks":
                 cur = conn.cursor()
-                cur.execute("SELECT id, title, assignee, due_date, status, created_at, completed_at FROM tasks ORDER BY CASE WHEN status = 'Pending' THEN 0 ELSE 1 END, id DESC")
+                batch_date = query.get("batch_date", [None])[0]
+                if batch_date and batch_date != "ALL":
+                    cur.execute("SELECT id, title, assignee, due_date, batch_date, status, created_at, completed_at FROM tasks WHERE batch_date = ? ORDER BY CASE WHEN status = 'Pending' THEN 0 ELSE 1 END, id DESC", (batch_date,))
+                else:
+                    cur.execute("SELECT id, title, assignee, due_date, batch_date, status, created_at, completed_at FROM tasks ORDER BY CASE WHEN status = 'Pending' THEN 0 ELSE 1 END, id DESC")
                 self.send_json([dict(r) for r in cur.fetchall()])
                 return
 
@@ -297,38 +315,135 @@ class DumCraftHandler(BaseHTTPRequestHandler):
             # Team GET /api/team/finances
             if path == "/api/team/finances":
                 cur = conn.cursor()
-                cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')")
-                conf_income = cur.fetchone()["total"]
+                batch_param = query.get("batch_date", [None])[0]
 
-                cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status = 'New'")
-                exp_income = cur.fetchone()["total"]
+                # Fetch all service days
+                cur.execute("SELECT date, open, order_limit, allow_overflow, cutoff_time, note, batch_name FROM service_days ORDER BY date ASC")
+                all_days = [dict(r) for r in cur.fetchall()]
+                batches = []
+                for d in all_days:
+                    b_name = resolve_batch_name(d, all_days)
+                    cur.execute("SELECT COALESCE(SUM(total_portions), 0) as booked, COUNT(id) as count FROM orders WHERE service_date = ? AND status != 'Cancelled'", (d["date"],))
+                    row = cur.fetchone()
+                    batches.append({
+                        "date": d["date"],
+                        "batch_name": b_name,
+                        "open": bool(d["open"]),
+                        "order_limit": d["order_limit"],
+                        "booked_portions": row["booked"],
+                        "order_count": row["count"]
+                    })
 
-                cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM income_entries")
-                manual_income = cur.fetchone()["total"]
+                # Batch comparison list
+                batch_comparison = []
+                for b in batches:
+                    cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE service_date = ? AND status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')", (b["date"],))
+                    conf_inc = cur.fetchone()["total"]
+                    cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?)", (b["date"], b["date"]))
+                    exp_amt = cur.fetchone()["total"]
+                    top_spender_row = cur.execute("SELECT spent_by, COALESCE(SUM(amount), 0) as total FROM expenses WHERE (batch_date = ? OR (batch_date IS NULL AND date = ?)) AND spent_by IS NOT NULL AND spent_by != '' GROUP BY spent_by ORDER BY total DESC LIMIT 1", (b["date"], b["date"])).fetchone()
 
-                cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM expenses")
-                total_expenses = cur.fetchone()["total"]
+                    net_prof = conf_inc - exp_amt
+                    margin = round((net_prof / conf_inc * 100), 1) if conf_inc > 0 else 0.0
+                    cost_per_p = round((exp_amt / b["booked_portions"]), 1) if b["booked_portions"] > 0 else 0.0
 
-                cur.execute("SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses GROUP BY category")
-                cat_breakdown = {r["category"]: r["total"] for r in cur.fetchall()}
+                    batch_comparison.append({
+                        "batch_name": b["batch_name"],
+                        "date": b["date"],
+                        "open": b["open"],
+                        "portions": b["booked_portions"],
+                        "confirmed_income": conf_inc,
+                        "total_expenses": exp_amt,
+                        "profit": net_prof,
+                        "margin": margin,
+                        "cost_per_portion": cost_per_p,
+                        "top_spender": f"{top_spender_row['spent_by']} (₹{top_spender_row['total']})" if top_spender_row else "-"
+                    })
 
-                cur.execute("SELECT id, date, category, amount, note FROM expenses ORDER BY date DESC, id DESC LIMIT 50")
-                expenses_list = [dict(r) for r in cur.fetchall()]
+                is_single_batch = batch_param is not None and batch_param != "ALL"
+                if is_single_batch:
+                    found_b = next((b for b in batches if b["date"] == batch_param), {"date": batch_param, "batch_name": f"Batch for {batch_param}"})
+                    selected_batch = found_b
 
-                cur.execute("SELECT id, date, amount, note FROM income_entries ORDER BY date DESC, id DESC LIMIT 50")
-                income_list = [dict(r) for r in cur.fetchall()]
+                    cur.execute("SELECT COALESCE(SUM(total), 0) as total, COALESCE(SUM(total_portions), 0) as portions FROM orders WHERE service_date = ? AND status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')", (batch_param,))
+                    conf_row = cur.fetchone()
+                    confirmed_income = conf_row["total"]
+                    portions_count = conf_row["portions"]
 
-                total_confirmed = conf_income + manual_income
-                profit = total_confirmed - total_expenses
+                    cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE service_date = ? AND status = 'New'", (batch_param,))
+                    expected_income = cur.fetchone()["total"]
+
+                    cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?)", (batch_param, batch_param))
+                    total_expenses = cur.fetchone()["total"]
+
+                    cur.execute("SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?) GROUP BY category", (batch_param, batch_param))
+                    cat_breakdown = {r["category"]: r["total"] for r in cur.fetchall()}
+
+                    cur.execute("SELECT COALESCE(spent_by, 'Unassigned / Shared') as member, COALESCE(SUM(amount), 0) as total, COUNT(id) as count FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?) GROUP BY COALESCE(spent_by, 'Unassigned / Shared') ORDER BY total DESC", (batch_param, batch_param))
+                    spent_by_summary = [{
+                        "member": r["member"],
+                        "amount": r["total"],
+                        "count": r["count"],
+                        "percentage": round((r["total"] / total_expenses * 100)) if total_expenses > 0 else 0
+                    } for r in cur.fetchall()]
+
+                    cur.execute("SELECT id, date, batch_date, spent_by, category, amount, note FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?) ORDER BY date DESC, id DESC LIMIT 100", (batch_param, batch_param))
+                    expenses_list = [dict(r) for r in cur.fetchall()]
+                    manual_income_list = []
+                else:
+                    selected_batch = None
+                    cur.execute("SELECT COALESCE(SUM(total), 0) as total, COALESCE(SUM(total_portions), 0) as portions FROM orders WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')")
+                    conf_row = cur.fetchone()
+                    conf_income = conf_row["total"]
+                    portions_count = conf_row["portions"]
+
+                    cur.execute("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status = 'New'")
+                    expected_income = cur.fetchone()["total"]
+
+                    cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM income_entries")
+                    manual_income = cur.fetchone()["total"]
+                    confirmed_income = conf_income + manual_income
+
+                    cur.execute("SELECT COALESCE(SUM(amount), 0) as total FROM expenses")
+                    total_expenses = cur.fetchone()["total"]
+
+                    cur.execute("SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses GROUP BY category")
+                    cat_breakdown = {r["category"]: r["total"] for r in cur.fetchall()}
+
+                    cur.execute("SELECT COALESCE(spent_by, 'Unassigned / Shared') as member, COALESCE(SUM(amount), 0) as total, COUNT(id) as count FROM expenses GROUP BY COALESCE(spent_by, 'Unassigned / Shared') ORDER BY total DESC")
+                    spent_by_summary = [{
+                        "member": r["member"],
+                        "amount": r["total"],
+                        "count": r["count"],
+                        "percentage": round((r["total"] / total_expenses * 100)) if total_expenses > 0 else 0
+                    } for r in cur.fetchall()]
+
+                    cur.execute("SELECT id, date, batch_date, spent_by, category, amount, note FROM expenses ORDER BY date DESC, id DESC LIMIT 100")
+                    expenses_list = [dict(r) for r in cur.fetchall()]
+
+                    cur.execute("SELECT id, date, amount, note FROM income_entries ORDER BY date DESC, id DESC LIMIT 50")
+                    manual_income_list = [dict(r) for r in cur.fetchall()]
+
+                profit = confirmed_income - total_expenses
+                profit_margin = round((profit / confirmed_income * 100), 1) if confirmed_income > 0 else 0.0
+                cost_per_portion = round((total_expenses / portions_count), 1) if portions_count > 0 else 0.0
 
                 self.send_json({
-                    "confirmed_income": total_confirmed,
-                    "expected_income": exp_income,
+                    "is_single_batch": is_single_batch,
+                    "selected_batch": selected_batch,
+                    "batches": batches,
+                    "batch_comparison": batch_comparison,
+                    "confirmed_income": confirmed_income,
+                    "expected_income": expected_income,
                     "total_expenses": total_expenses,
                     "profit": profit,
+                    "profit_margin": profit_margin,
+                    "portions_count": portions_count,
+                    "cost_per_portion": cost_per_portion,
                     "category_breakdown": cat_breakdown,
+                    "spent_by_summary": spent_by_summary,
                     "expenses": expenses_list,
-                    "manual_income": income_list
+                    "manual_income": manual_income_list
                 })
                 return
 
@@ -533,22 +648,24 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                 allow_overflow = 1 if body.get("allow_overflow") else 0
                 cutoff_time = (body.get("cutoff_time") or "").strip() or None
                 note = (body.get("note") or "").strip() or None
+                batch_name = (body.get("batch_name") or "").strip() or None
 
                 if not date: return self.send_error_json("Valid date (YYYY-MM-DD) is required")
 
                 cur = conn.cursor()
                 cur.execute("""
-                    INSERT INTO service_days (date, open, order_limit, allow_overflow, cutoff_time, note)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO service_days (date, open, order_limit, allow_overflow, cutoff_time, note, batch_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(date) DO UPDATE SET
                       open = excluded.open,
                       order_limit = excluded.order_limit,
                       allow_overflow = excluded.allow_overflow,
                       cutoff_time = excluded.cutoff_time,
-                      note = excluded.note
-                """, (date, open_flag, order_limit, allow_overflow, cutoff_time, note))
+                      note = excluded.note,
+                      batch_name = excluded.batch_name
+                """, (date, open_flag, order_limit, allow_overflow, cutoff_time, note, batch_name))
                 conn.commit()
-                self.send_json({"success": True, "date": date})
+                self.send_json({"success": True, "date": date, "batch_name": batch_name})
                 return
 
             # Team POST /api/team/orders/batch - Batch status update
@@ -627,13 +744,14 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                 title = (body.get("title") or "").strip()
                 assignee = (body.get("assignee") or "").strip() or None
                 due_date = (body.get("due_date") or "").strip() or None
+                batch_date = (body.get("batch_date") or "").strip() or None
 
                 if not title: return self.send_error_json("Task title is required")
 
                 cur = conn.cursor()
                 cur.execute(
-                    "INSERT INTO tasks (title, assignee, due_date, status) VALUES (?, ?, ?, 'Pending')",
-                    (title, assignee, due_date)
+                    "INSERT INTO tasks (title, assignee, due_date, batch_date, status) VALUES (?, ?, ?, ?, 'Pending')",
+                    (title, assignee, due_date, batch_date)
                 )
                 conn.commit()
                 self.send_json({"success": True, "id": cur.lastrowid}, 201)
@@ -656,14 +774,16 @@ class DumCraftHandler(BaseHTTPRequestHandler):
                 category = (body.get("category") or "other").strip()
                 amount = float(body.get("amount") or 0)
                 note = (body.get("note") or "").strip()
+                spent_by = (body.get("spent_by") or "").strip() or None
+                batch_date = (body.get("batch_date") or "").strip() or date
 
                 if not date: return self.send_error_json("Date is required")
                 if amount <= 0: return self.send_error_json("Amount must be greater than 0")
 
                 cur = conn.cursor()
                 cur.execute(
-                    "INSERT INTO expenses (date, category, amount, note) VALUES (?, ?, ?, ?)",
-                    (date, category, amount, note)
+                    "INSERT INTO expenses (date, batch_date, spent_by, category, amount, note) VALUES (?, ?, ?, ?, ?, ?)",
+                    (date, batch_date, spent_by, category, amount, note)
                 )
                 conn.commit()
                 self.send_json({"success": True, "id": cur.lastrowid}, 201)

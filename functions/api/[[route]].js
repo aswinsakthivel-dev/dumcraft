@@ -60,6 +60,41 @@ async function ensureFeedbackTable(db) {
   }
 }
 
+let schemaMigrationsChecked = false;
+async function ensureSchemaMigrations(db) {
+  if (schemaMigrationsChecked) return;
+  try {
+    try { await db.prepare("ALTER TABLE service_days ADD COLUMN batch_name TEXT").run(); } catch (e) {}
+    try { await db.prepare("ALTER TABLE expenses ADD COLUMN spent_by TEXT").run(); } catch (e) {}
+    try { await db.prepare("ALTER TABLE expenses ADD COLUMN batch_date TEXT").run(); } catch (e) {}
+    try { await db.prepare("ALTER TABLE tasks ADD COLUMN batch_date TEXT").run(); } catch (e) {}
+    try {
+      await db.prepare("INSERT OR IGNORE INTO service_days (date, open, order_limit, allow_overflow, cutoff_time, note, batch_name) VALUES ('2026-11-22', 1, 50, 0, '14:00', 'Sunday Dum Biryani Service', 'Batch 2')").run();
+      await db.prepare("UPDATE service_days SET batch_name = 'Batch 2' WHERE date = '2026-11-22' AND (batch_name IS NULL OR batch_name = '')").run();
+    } catch (e) {}
+    schemaMigrationsChecked = true;
+  } catch (err) {
+    console.error('Migration error', err);
+  }
+}
+
+function resolveBatchName(day, allDays = []) {
+  if (day.batch_name && String(day.batch_name).trim() !== '') {
+    return String(day.batch_name).trim();
+  }
+  if (day.date === '2026-11-22') {
+    return 'Batch 2';
+  }
+  const sorted = [...allDays].sort((a, b) => a.date.localeCompare(b.date));
+  const idx22 = sorted.findIndex(d => d.date === '2026-11-22');
+  const thisIdx = sorted.findIndex(d => d.date === day.date);
+  if (idx22 !== -1 && thisIdx !== -1) {
+    const batchNum = 2 + (thisIdx - idx22);
+    return `Batch ${batchNum}`;
+  }
+  return `Batch ${thisIdx !== -1 ? thisIdx + 1 : 1}`;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -417,13 +452,15 @@ export async function onRequest(context) {
     // --- Service Calendar & Limits ---
     // GET /api/team/service-days
     if (path === '/team/service-days' && method === 'GET') {
-      const rows = await db.prepare("SELECT date, open, order_limit, allow_overflow, cutoff_time, note FROM service_days ORDER BY date ASC").all();
-      
+      await ensureSchemaMigrations(db);
+      const rows = await db.prepare("SELECT date, open, order_limit, allow_overflow, cutoff_time, note, batch_name FROM service_days ORDER BY date ASC").all();
+      const allDays = rows.results || [];
       const results = [];
-      for (const d of (rows.results || [])) {
+      for (const d of allDays) {
         const bookedRow = await db.prepare("SELECT COALESCE(SUM(total_portions), 0) as booked, COUNT(id) as order_count FROM orders WHERE service_date = ? AND status != 'Cancelled'").bind(d.date).first();
         results.push({
           ...d,
+          batch_name: resolveBatchName(d, allDays),
           open: d.open === 1,
           allow_overflow: d.allow_overflow === 1,
           booked_portions: bookedRow ? Number(bookedRow.booked) : 0,
@@ -435,6 +472,7 @@ export async function onRequest(context) {
 
     // POST /api/team/service-days - Upsert service day
     if (path === '/team/service-days' && method === 'POST') {
+      await ensureSchemaMigrations(db);
       const b = await request.json();
       const date = (b.date || '').trim();
       const open = b.open ? 1 : 0;
@@ -442,23 +480,25 @@ export async function onRequest(context) {
       const allow_overflow = b.allow_overflow ? 1 : 0;
       const cutoff_time = b.cutoff_time ? b.cutoff_time.trim() : null;
       const note = b.note ? b.note.trim() : null;
+      const batch_name = b.batch_name ? b.batch_name.trim() : null;
 
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return errorResponse('Valid date (YYYY-MM-DD) is required');
       }
 
       await db.prepare(`
-        INSERT INTO service_days (date, open, order_limit, allow_overflow, cutoff_time, note)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO service_days (date, open, order_limit, allow_overflow, cutoff_time, note, batch_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date) DO UPDATE SET
           open = excluded.open,
           order_limit = excluded.order_limit,
           allow_overflow = excluded.allow_overflow,
           cutoff_time = excluded.cutoff_time,
-          note = excluded.note
-      `).bind(date, open, order_limit, allow_overflow, cutoff_time, note).run();
+          note = excluded.note,
+          batch_name = excluded.batch_name
+      `).bind(date, open, order_limit, allow_overflow, cutoff_time, note, batch_name).run();
 
-      return jsonResponse({ success: true, date });
+      return jsonResponse({ success: true, date, batch_name });
     }
 
     // --- Orders Dashboard ---
@@ -647,22 +687,33 @@ export async function onRequest(context) {
     // --- Tasks Management ---
     // GET /api/team/tasks
     if (path === '/team/tasks' && method === 'GET') {
-      const rows = await db.prepare("SELECT id, title, assignee, due_date, status, created_at, completed_at FROM tasks ORDER BY CASE WHEN status = 'Pending' THEN 0 ELSE 1 END, id DESC").all();
+      await ensureSchemaMigrations(db);
+      const batchDate = url.searchParams.get('batch_date');
+      let query = "SELECT id, title, assignee, due_date, batch_date, status, created_at, completed_at FROM tasks";
+      const params = [];
+      if (batchDate && batchDate !== 'ALL') {
+        query += " WHERE batch_date = ?";
+        params.push(batchDate);
+      }
+      query += " ORDER BY CASE WHEN status = 'Pending' THEN 0 ELSE 1 END, id DESC";
+      const rows = params.length > 0 ? await db.prepare(query).bind(...params).all() : await db.prepare(query).all();
       return jsonResponse(rows.results || []);
     }
 
     // POST /api/team/tasks
     if (path === '/team/tasks' && method === 'POST') {
+      await ensureSchemaMigrations(db);
       const b = await request.json();
       const title = (b.title || '').trim();
       const assignee = (b.assignee || '').trim() || null;
       const due_date = (b.due_date || '').trim() || null;
+      const batch_date = (b.batch_date || '').trim() || null;
 
       if (!title) return errorResponse('Task title is required');
 
       const res = await db.prepare(
-        "INSERT INTO tasks (title, assignee, due_date, status) VALUES (?, ?, ?, 'Pending')"
-      ).bind(title, assignee, due_date).run();
+        "INSERT INTO tasks (title, assignee, due_date, batch_date, status) VALUES (?, ?, ?, ?, 'Pending')"
+      ).bind(title, assignee, due_date, batch_date).run();
 
       return jsonResponse({ success: true, id: res.meta.last_row_id }, 201);
     }
@@ -711,68 +762,191 @@ export async function onRequest(context) {
       return jsonResponse({ success: true });
     }
 
-    // --- Finances (Expenses & Income) ---
-    // GET /api/team/finances
+    // --- Finances (Expenses & Income with Batch & Member Tracking) ---
+    // GET /api/team/finances?batch_date=...
     if (path === '/team/finances' && method === 'GET') {
-      // Calculate Confirmed Income: orders with Confirmed, Preparing, Out for delivery, Delivered
-      const confIncomeRow = await db.prepare(`
-        SELECT COALESCE(SUM(total), 0) as total FROM orders 
-        WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')
-      `).first();
+      await ensureSchemaMigrations(db);
+      const batchDateParam = url.searchParams.get('batch_date');
 
-      // Expected Income: 'New' orders
-      const expIncomeRow = await db.prepare(`
-        SELECT COALESCE(SUM(total), 0) as total FROM orders 
-        WHERE status = 'New'
-      `).first();
+      // Fetch all service days to construct batches list
+      const daysRows = await db.prepare("SELECT date, open, order_limit, allow_overflow, cutoff_time, note, batch_name FROM service_days ORDER BY date ASC").all();
+      const allDays = daysRows.results || [];
+      const batches = [];
 
-      // Manual Income entries
-      const manualIncomeRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM income_entries").first();
+      for (const d of allDays) {
+        const bName = resolveBatchName(d, allDays);
+        const bookedRow = await db.prepare("SELECT COALESCE(SUM(total_portions), 0) as booked, COUNT(id) as count FROM orders WHERE service_date = ? AND status != 'Cancelled'").bind(d.date).first();
+        batches.push({
+          date: d.date,
+          batch_name: bName,
+          open: d.open === 1,
+          order_limit: d.order_limit,
+          booked_portions: bookedRow ? Number(bookedRow.booked) : 0,
+          order_count: bookedRow ? Number(bookedRow.count) : 0
+        });
+      }
 
-      // Expenses Total
-      const expensesRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM expenses").first();
+      // Batch Comparison Table Data
+      const batchComparison = [];
+      for (const b of batches) {
+        const confRow = await db.prepare("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE service_date = ? AND status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')").bind(b.date).first();
+        const expRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?)").bind(b.date, b.date).first();
+        const topSpenderRow = await db.prepare("SELECT spent_by, COALESCE(SUM(amount), 0) as total FROM expenses WHERE (batch_date = ? OR (batch_date IS NULL AND date = ?)) AND spent_by IS NOT NULL AND spent_by != '' GROUP BY spent_by ORDER BY total DESC LIMIT 1").bind(b.date, b.date).first();
 
-      // Category breakdown for expenses
-      const catRows = await db.prepare("SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses GROUP BY category").all();
-      const categoryBreakdown = {};
-      (catRows.results || []).forEach(c => { categoryBreakdown[c.category] = Number(c.total); });
+        const confInc = Number(confRow ? confRow.total : 0);
+        const expAmt = Number(expRow ? expRow.total : 0);
+        const netProf = confInc - expAmt;
+        const margin = confInc > 0 ? ((netProf / confInc) * 100).toFixed(1) : '0.0';
+        const costPerPortion = b.booked_portions > 0 ? (expAmt / b.booked_portions).toFixed(1) : '0.0';
 
-      // Recent expenses
-      const expensesList = await db.prepare("SELECT id, date, category, amount, note FROM expenses ORDER BY date DESC, id DESC LIMIT 50").all();
+        batchComparison.push({
+          batch_name: b.batch_name,
+          date: b.date,
+          open: b.open,
+          portions: b.booked_portions,
+          confirmed_income: confInc,
+          total_expenses: expAmt,
+          profit: netProf,
+          margin: Number(margin),
+          cost_per_portion: Number(costPerPortion),
+          top_spender: topSpenderRow ? `${topSpenderRow.spent_by} (₹${topSpenderRow.total})` : '-'
+        });
+      }
 
-      // Recent manual income
-      const incomeList = await db.prepare("SELECT id, date, amount, note FROM income_entries ORDER BY date DESC, id DESC LIMIT 50").all();
+      const isSingleBatch = batchDateParam && batchDateParam !== 'ALL';
+      let confirmedIncome = 0;
+      let expectedIncome = 0;
+      let totalExpenses = 0;
+      let portionsCount = 0;
+      let categoryBreakdown = {};
+      let spentBySummary = [];
+      let expensesList = [];
+      let manualIncomeList = [];
+      let selectedBatch = null;
 
-      const confirmedIncome = Number(confIncomeRow ? confIncomeRow.total : 0) + Number(manualIncomeRow ? manualIncomeRow.total : 0);
-      const expectedIncome = Number(expIncomeRow ? expIncomeRow.total : 0);
-      const totalExpenses = Number(expensesRow ? expensesRow.total : 0);
+      if (isSingleBatch) {
+        const foundBatch = batches.find(b => b.date === batchDateParam) || { date: batchDateParam, batch_name: `Batch for ${batchDateParam}` };
+        selectedBatch = foundBatch;
+
+        // Income for single batch
+        const confIncomeRow = await db.prepare(`
+          SELECT COALESCE(SUM(total), 0) as total, COALESCE(SUM(total_portions), 0) as portions FROM orders 
+          WHERE service_date = ? AND status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')
+        `).bind(batchDateParam).first();
+
+        const expIncomeRow = await db.prepare("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE service_date = ? AND status = 'New'").bind(batchDateParam).first();
+
+        confirmedIncome = Number(confIncomeRow ? confIncomeRow.total : 0);
+        expectedIncome = Number(expIncomeRow ? expIncomeRow.total : 0);
+        portionsCount = Number(confIncomeRow ? confIncomeRow.portions : 0);
+
+        // Expenses for single batch
+        const expensesRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?)").bind(batchDateParam, batchDateParam).first();
+        totalExpenses = Number(expensesRow ? expensesRow.total : 0);
+
+        // Category breakdown
+        const catRows = await db.prepare("SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?) GROUP BY category").bind(batchDateParam, batchDateParam).all();
+        (catRows.results || []).forEach(c => { categoryBreakdown[c.category] = Number(c.total); });
+
+        // Spent by member summary
+        const spentRows = await db.prepare(`
+          SELECT COALESCE(spent_by, 'Unassigned / Shared') as member, COALESCE(SUM(amount), 0) as total, COUNT(id) as count 
+          FROM expenses 
+          WHERE batch_date = ? OR (batch_date IS NULL AND date = ?)
+          GROUP BY COALESCE(spent_by, 'Unassigned / Shared')
+          ORDER BY total DESC
+        `).bind(batchDateParam, batchDateParam).all();
+
+        spentBySummary = (spentRows.results || []).map(r => ({
+          member: r.member,
+          amount: Number(r.total),
+          count: Number(r.count),
+          percentage: totalExpenses > 0 ? Math.round((Number(r.total) / totalExpenses) * 100) : 0
+        }));
+
+        // Expenses list
+        const expListRes = await db.prepare("SELECT id, date, batch_date, spent_by, category, amount, note FROM expenses WHERE batch_date = ? OR (batch_date IS NULL AND date = ?) ORDER BY date DESC, id DESC LIMIT 100").bind(batchDateParam, batchDateParam).all();
+        expensesList = expListRes.results || [];
+
+      } else {
+        // Overall / Lifetime
+        const confIncomeRow = await db.prepare(`
+          SELECT COALESCE(SUM(total), 0) as total, COALESCE(SUM(total_portions), 0) as portions FROM orders 
+          WHERE status IN ('Confirmed', 'Preparing', 'Out for delivery', 'Delivered', 'Dunzo-ED')
+        `).first();
+        const expIncomeRow = await db.prepare("SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE status = 'New'").first();
+        const manualIncomeRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM income_entries").first();
+        const expensesRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM expenses").first();
+
+        confirmedIncome = Number(confIncomeRow ? confIncomeRow.total : 0) + Number(manualIncomeRow ? manualIncomeRow.total : 0);
+        expectedIncome = Number(expIncomeRow ? expIncomeRow.total : 0);
+        totalExpenses = Number(expensesRow ? expensesRow.total : 0);
+        portionsCount = Number(confIncomeRow ? confIncomeRow.portions : 0);
+
+        const catRows = await db.prepare("SELECT category, COALESCE(SUM(amount), 0) as total FROM expenses GROUP BY category").all();
+        (catRows.results || []).forEach(c => { categoryBreakdown[c.category] = Number(c.total); });
+
+        const spentRows = await db.prepare(`
+          SELECT COALESCE(spent_by, 'Unassigned / Shared') as member, COALESCE(SUM(amount), 0) as total, COUNT(id) as count 
+          FROM expenses 
+          GROUP BY COALESCE(spent_by, 'Unassigned / Shared')
+          ORDER BY total DESC
+        `).all();
+
+        spentBySummary = (spentRows.results || []).map(r => ({
+          member: r.member,
+          amount: Number(r.total),
+          count: Number(r.count),
+          percentage: totalExpenses > 0 ? Math.round((Number(r.total) / totalExpenses) * 100) : 0
+        }));
+
+        const expListRes = await db.prepare("SELECT id, date, batch_date, spent_by, category, amount, note FROM expenses ORDER BY date DESC, id DESC LIMIT 100").all();
+        expensesList = expListRes.results || [];
+
+        const incListRes = await db.prepare("SELECT id, date, amount, note FROM income_entries ORDER BY date DESC, id DESC LIMIT 50").all();
+        manualIncomeList = incListRes.results || [];
+      }
+
       const profit = confirmedIncome - totalExpenses;
+      const profitMargin = confirmedIncome > 0 ? Number(((profit / confirmedIncome) * 100).toFixed(1)) : 0;
+      const costPerPortion = portionsCount > 0 ? Number((totalExpenses / portionsCount).toFixed(1)) : 0;
 
       return jsonResponse({
+        is_single_batch: isSingleBatch,
+        selected_batch: selectedBatch,
+        batches,
+        batch_comparison: batchComparison,
         confirmed_income: confirmedIncome,
         expected_income: expectedIncome,
         total_expenses: totalExpenses,
         profit,
+        profit_margin: profitMargin,
+        portions_count: portionsCount,
+        cost_per_portion: costPerPortion,
         category_breakdown: categoryBreakdown,
-        expenses: expensesList.results || [],
-        manual_income: incomeList.results || []
+        spent_by_summary: spentBySummary,
+        expenses: expensesList,
+        manual_income: manualIncomeList
       });
     }
 
     // POST /api/team/expenses
     if (path === '/team/expenses' && method === 'POST') {
+      await ensureSchemaMigrations(db);
       const b = await request.json();
       const date = (b.date || '').trim();
       const category = (b.category || 'other').trim();
       const amount = parseFloat(b.amount) || 0;
       const note = (b.note || '').trim();
+      const spent_by = (b.spent_by || '').trim() || null;
+      const batch_date = (b.batch_date || '').trim() || date;
 
       if (!date) return errorResponse('Date is required');
       if (amount <= 0) return errorResponse('Amount must be greater than 0');
 
       const res = await db.prepare(
-        "INSERT INTO expenses (date, category, amount, note) VALUES (?, ?, ?, ?)"
-      ).bind(date, category, amount, note).run();
+        "INSERT INTO expenses (date, batch_date, spent_by, category, amount, note) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(date, batch_date, spent_by, category, amount, note).run();
 
       return jsonResponse({ success: true, id: res.meta.last_row_id }, 201);
     }

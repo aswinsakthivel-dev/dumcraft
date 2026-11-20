@@ -205,6 +205,19 @@ async function loadOrders(silent = false) {
     document.getElementById('metricOrders').textContent = summary.total_active_orders || 0;
     document.getElementById('chefDateLabel').textContent = dateVal || 'All Dates';
 
+    // Batch Badge next to date filter
+    const batchBadgeEl = document.getElementById('orderBatchBadge');
+    if (batchBadgeEl) {
+      const matchDay = (serviceDays || []).find(d => d.date === dateVal);
+      const bName = matchDay ? (matchDay.batch_name || 'Batch') : (dateVal === '2026-11-22' ? 'Batch 2' : null);
+      if (bName) {
+        batchBadgeEl.textContent = `📦 ${bName}`;
+        batchBadgeEl.style.display = 'inline-block';
+      } else {
+        batchBadgeEl.style.display = 'none';
+      }
+    }
+
     // Item breakdown
     const breakdownEl = document.getElementById('chefItemBreakdown');
     breakdownEl.innerHTML = '';
@@ -843,7 +856,7 @@ async function loadCalendar() {
 function renderCalendar() {
   const tbody = document.getElementById('calTableBody');
   if (serviceDays.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">No service days scheduled yet. Add one above!</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">No service days scheduled yet. Add one above!</td></tr>';
     return;
   }
 
@@ -856,6 +869,7 @@ function renderCalendar() {
 
     tr.innerHTML = `
       <td><strong>${d.date}</strong></td>
+      <td><span class="badge" style="background:#ffedd5; color:#c2410c; font-weight:700; border:1px solid #fdba74;">${d.batch_name || 'Batch'}</span></td>
       <td>${statusText}</td>
       <td><strong>${d.booked_portions}</strong> / ${d.order_limit} portions (${d.order_count || 0} orders)</td>
       <td>${d.allow_overflow ? '<span class="badge badge-confirmed">Yes (Overflow ON)</span>' : '<span class="muted">No</span>'}</td>
@@ -870,6 +884,7 @@ function renderCalendar() {
 
 function editCalDay(d) {
   document.getElementById('calDate').value = d.date;
+  document.getElementById('calBatchName').value = d.batch_name || '';
   document.getElementById('calLimit').value = d.order_limit;
   document.getElementById('calCutoff').value = d.cutoff_time || '';
   document.getElementById('calNote').value = d.note || '';
@@ -883,6 +898,7 @@ async function saveServiceDay(e) {
   e.preventDefault();
   const payload = {
     date: document.getElementById('calDate').value,
+    batch_name: document.getElementById('calBatchName').value.trim() || null,
     order_limit: parseInt(document.getElementById('calLimit').value, 10),
     cutoff_time: document.getElementById('calCutoff').value || null,
     note: document.getElementById('calNote').value || null,
@@ -895,7 +911,7 @@ async function saveServiceDay(e) {
       method: 'POST',
       body: JSON.stringify(payload)
     });
-    showAlert(`Service day ${payload.date} saved`);
+    showAlert(`Service day ${payload.date} saved (${payload.batch_name || 'Batch'})`);
     loadCalendar();
   } catch (err) {
     showAlert(`Error saving service day: ${err.message}`, 'danger');
@@ -1091,6 +1107,34 @@ async function loadTasks() {
   listEl.innerHTML = '<div class="muted">Loading tasks...</div>';
 
   try {
+    // Populate batch dropdowns for tasks
+    const taskBatchSelect = document.getElementById('taskBatch');
+    const taskFilterBatch = document.getElementById('taskFilterBatch');
+    if (serviceDays && serviceDays.length > 0) {
+      if (taskBatchSelect) {
+        const curBatch = taskBatchSelect.value;
+        taskBatchSelect.innerHTML = '<option value="">General (No Batch)</option>';
+        serviceDays.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = b.date;
+          opt.textContent = `${b.batch_name || 'Batch'} (${b.date})`;
+          taskBatchSelect.appendChild(opt);
+        });
+        if (curBatch) taskBatchSelect.value = curBatch;
+      }
+      if (taskFilterBatch) {
+        const curFilter = taskFilterBatch.value;
+        taskFilterBatch.innerHTML = '<option value="ALL">All Batches</option>';
+        serviceDays.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = b.date;
+          opt.textContent = `${b.batch_name || 'Batch'} (${b.date})`;
+          taskFilterBatch.appendChild(opt);
+        });
+        if (curFilter) taskFilterBatch.value = curFilter;
+      }
+    }
+
     allTasks = await apiFetch('/api/team/tasks');
     renderTasks();
   } catch (err) {
@@ -1102,11 +1146,14 @@ function renderTasks() {
   const listEl = document.getElementById('tasksList');
   const assigneeFilter = document.getElementById('taskFilterAssignee').value;
   const statusFilter = document.getElementById('taskFilterStatus').value;
+  const batchFilterEl = document.getElementById('taskFilterBatch');
+  const batchFilter = batchFilterEl ? batchFilterEl.value : 'ALL';
 
   const filtered = allTasks.filter(t => {
     const matchAssignee = assigneeFilter === 'ALL' || t.assignee === assigneeFilter;
     const matchStatus = statusFilter === 'ALL' || t.status === statusFilter;
-    return matchAssignee && matchStatus;
+    const matchBatch = batchFilter === 'ALL' || t.batch_date === batchFilter;
+    return matchAssignee && matchStatus && matchBatch;
   });
 
   if (filtered.length === 0) {
@@ -1120,12 +1167,21 @@ function renderTasks() {
     const isDone = t.status === 'Done';
     div.className = `task-item ${isDone ? 'done' : ''}`;
 
+    const matchB = (serviceDays || []).find(b => b.date === t.batch_date);
+    const batchLabel = matchB ? matchB.batch_name : (t.batch_date ? `Batch ${t.batch_date}` : null);
+    const batchBadgeHtml = batchLabel 
+      ? `<span class="badge" style="background:#ffedd5; color:#c2410c; font-size:0.75rem; font-weight:700;">📦 ${batchLabel}</span>` 
+      : '';
+
     div.innerHTML = `
       <div class="task-left">
         <input type="checkbox" class="task-checkbox" ${isDone ? 'checked' : ''} onchange="toggleTaskStatus(${t.id}, this.checked)">
         <div>
-          <div style="font-weight:600; font-size:0.95rem;">${t.title}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted);">
+          <div style="font-weight:600; font-size:0.95rem; display:flex; align-items:center; gap:6px;">
+            <span>${t.title}</span>
+            ${batchBadgeHtml}
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
             ${t.assignee ? `👤 ${t.assignee}` : '👤 Unassigned'}
             ${t.due_date ? ` • 📅 Due: ${t.due_date}` : ''}
           </div>
@@ -1142,6 +1198,7 @@ async function saveTask(e) {
   const payload = {
     title: document.getElementById('taskTitle').value.trim(),
     assignee: document.getElementById('taskAssignee').value,
+    batch_date: document.getElementById('taskBatch') ? document.getElementById('taskBatch').value || null : null,
     due_date: document.getElementById('taskDueDate').value || null
   };
 
@@ -1180,22 +1237,156 @@ async function deleteTask(taskId) {
 }
 
 // ==========================================
-// FINANCES (EXPENSES & INCOME)
 // ==========================================
+// FINANCES (EXPENSES & INCOME WITH BATCHES & MEMBER TRACKING)
+// ==========================================
+function selectBatchFilter(batchDate) {
+  const finSelect = document.getElementById('finBatchSelect');
+  if (finSelect) {
+    finSelect.value = batchDate;
+    loadFinances();
+  }
+}
+
 async function loadFinances() {
   try {
-    const data = await apiFetch('/api/team/finances');
+    const finSelect = document.getElementById('finBatchSelect');
+    const selectedBatchDate = finSelect ? finSelect.value : 'ALL';
+    const url = `/api/team/finances?batch_date=${encodeURIComponent(selectedBatchDate)}`;
+    const data = await apiFetch(url);
+
+    // Populate Batch Filter Selector
+    if (finSelect && data.batches) {
+      const curVal = finSelect.value || 'ALL';
+      finSelect.innerHTML = '<option value="ALL">🌐 Overall / All Batches (Lifetime)</option>';
+      data.batches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.date;
+        opt.textContent = `📦 ${b.batch_name || 'Batch'} (${b.date}) - ${b.booked_portions} portions`;
+        finSelect.appendChild(opt);
+      });
+      finSelect.value = curVal;
+    }
+
+    // Populate expBatch in Record Expense form
+    const expBatchSelect = document.getElementById('expBatch');
+    if (expBatchSelect && data.batches) {
+      const curExpBatch = expBatchSelect.value;
+      expBatchSelect.innerHTML = '';
+      data.batches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.date;
+        opt.textContent = `📦 ${b.batch_name || 'Batch'} (${b.date})`;
+        expBatchSelect.appendChild(opt);
+      });
+      if (curExpBatch) {
+        expBatchSelect.value = curExpBatch;
+      } else if (selectedBatchDate !== 'ALL') {
+        expBatchSelect.value = selectedBatchDate;
+      } else if (data.batches.length > 0) {
+        expBatchSelect.value = data.batches[0].date;
+      }
+    }
+
+    // Populate expSpentBy if empty
+    const expSpentBySelect = document.getElementById('expSpentBy');
+    if (expSpentBySelect && (!expSpentBySelect.options || expSpentBySelect.options.length <= 1) && teamMembers.length > 0) {
+      const curSpentBy = expSpentBySelect.value;
+      expSpentBySelect.innerHTML = '<option value="">Select Team Member</option>';
+      teamMembers.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = m.name;
+        expSpentBySelect.appendChild(opt);
+      });
+      if (curSpentBy) expSpentBySelect.value = curSpentBy;
+    }
+
+    // Update Meta Badge
+    const metaBadgeEl = document.getElementById('finBatchMetaBadge');
+    if (metaBadgeEl) {
+      if (data.is_single_batch && data.selected_batch) {
+        metaBadgeEl.innerHTML = `
+          <span class="badge" style="background:#ffedd5; color:#c2410c; font-weight:700; font-size:0.85rem; border:1px solid #fdba74;">
+            📦 ${data.selected_batch.batch_name} (${data.portions_count || 0} portions booked)
+          </span>
+          <button class="btn btn-secondary btn-sm" onclick="selectBatchFilter('ALL')" style="padding:4px 8px; font-size:0.8rem;">
+            Show Lifetime
+          </button>
+        `;
+      } else {
+        metaBadgeEl.innerHTML = `
+          <span class="badge" style="background:#f1f5f9; color:var(--secondary); font-weight:700; font-size:0.85rem;">
+            🌐 Lifetime Summary (${(data.batches || []).length} Batches)
+          </span>
+        `;
+      }
+    }
+
+    // Update Metric Cards
     document.getElementById('finConfirmedIncome').textContent = `₹${data.confirmed_income || 0}`;
     document.getElementById('finExpectedIncome').textContent = `₹${data.expected_income || 0}`;
     document.getElementById('finTotalExpenses').textContent = `₹${data.total_expenses || 0}`;
-    document.getElementById('finProfit').textContent = `₹${data.profit || 0}`;
+
+    const profitEl = document.getElementById('finProfit');
+    const profitVal = data.profit || 0;
+    profitEl.textContent = `₹${profitVal}`;
+    profitEl.style.color = profitVal >= 0 ? 'var(--success)' : 'var(--danger)';
+
+    const marginEl = document.getElementById('finProfitMargin');
+    if (marginEl) {
+      const marginVal = data.profit_margin || 0;
+      marginEl.textContent = `${marginVal}%`;
+      marginEl.style.color = marginVal >= 0 ? '#0284c7' : 'var(--danger)';
+    }
+
+    const portionCostEl = document.getElementById('finCostPerPortion');
+    if (portionCostEl) {
+      portionCostEl.textContent = `₹${data.cost_per_portion || 0}`;
+    }
+
+    // Team Member Spendings Breakdown & Chart
+    renderTeamSpendChart(data.spent_by_summary || [], data.total_expenses || 0);
+
+    // Batch Comparison Table (Show only on ALL batches view)
+    const compCard = document.getElementById('batchComparisonCard');
+    const compTbody = document.getElementById('batchComparisonTableBody');
+    if (compCard && compTbody) {
+      if (!data.is_single_batch && data.batch_comparison && data.batch_comparison.length > 0) {
+        compCard.style.display = 'block';
+        compTbody.innerHTML = '';
+        data.batch_comparison.forEach(b => {
+          const tr = document.createElement('tr');
+          const isSelected = selectedBatchDate === b.date;
+          tr.style.background = isSelected ? '#fff7ed' : '';
+          tr.innerHTML = `
+            <td><strong>📦 ${b.batch_name}</strong></td>
+            <td>${b.date}</td>
+            <td><strong>${b.portions}</strong> portions</td>
+            <td style="color:var(--success); font-weight:600;">₹${b.confirmed_income}</td>
+            <td style="color:var(--danger); font-weight:600;">₹${b.total_expenses}</td>
+            <td style="color:${b.profit >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:700;">₹${b.profit}</td>
+            <td><span class="badge" style="background:${b.margin >= 0 ? '#dcfce7' : '#fee2e2'}; color:${b.margin >= 0 ? '#15803d' : '#b91c1c'}; font-weight:700;">${b.margin}%</span></td>
+            <td><span class="badge" style="background:#f1f5f9; color:var(--secondary); font-size:0.8rem;">${b.top_spender}</span></td>
+            <td>
+              <button class="btn btn-secondary btn-sm" onclick="selectBatchFilter('${b.date}')" style="font-size:0.8rem; padding:4px 8px;">
+                Inspect
+              </button>
+            </td>
+          `;
+          compTbody.appendChild(tr);
+        });
+      } else {
+        compCard.style.display = 'none';
+      }
+    }
 
     // Category pills
     const pillsContainer = document.getElementById('finCategoryPills');
     pillsContainer.innerHTML = '';
     const breakdown = data.category_breakdown || {};
     if (Object.keys(breakdown).length === 0) {
-      pillsContainer.innerHTML = '<span class="muted">No expenses recorded yet.</span>';
+      pillsContainer.innerHTML = '<span class="muted">No expenses recorded for this filter.</span>';
     } else {
       Object.entries(breakdown).forEach(([cat, amt]) => {
         const pill = document.createElement('span');
@@ -1222,7 +1413,7 @@ async function loadFinances() {
     tbody.innerHTML = '';
     const expenses = data.expenses || [];
     if (expenses.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="muted">No expenses recorded yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center; padding:16px;">No expenses recorded for this filter.</td></tr>';
     } else {
       expenses.forEach(e => {
         const tr = document.createElement('tr');
@@ -1231,8 +1422,21 @@ async function loadFinances() {
           ? 'background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-weight:700;'
           : 'background:#fee2e2; color:#b91c1c;';
         const catLabel = isWastage ? '⚠️ wastage' : e.category;
+
+        // Resolve batch name
+        const matchB = (data.batches || []).find(b => b.date === e.batch_date);
+        const batchBadgeHtml = matchB
+          ? `<span class="badge" style="background:#ffedd5; color:#c2410c; font-weight:700; font-size:0.8rem;">📦 ${matchB.batch_name}</span>`
+          : (e.batch_date ? `<span class="badge" style="background:#f1f5f9; color:var(--text-muted); font-size:0.8rem;">${e.batch_date}</span>` : '<span class="muted">-</span>');
+
+        const spentByHtml = e.spent_by 
+          ? `<span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:600; font-size:0.85rem;">👤 ${e.spent_by}</span>`
+          : '<span class="muted" style="font-size:0.85rem;">Unassigned</span>';
+
         tr.innerHTML = `
           <td>${e.date}</td>
+          <td>${batchBadgeHtml}</td>
+          <td>${spentByHtml}</td>
           <td><span class="badge" style="${badgeStyle}">${catLabel}</span></td>
           <td><strong style="${isWastage ? 'color:#b45309;' : ''}">₹${e.amount}</strong></td>
           <td>${e.note || ''}</td>
@@ -1246,10 +1450,84 @@ async function loadFinances() {
   }
 }
 
+function renderTeamSpendChart(summary, totalExpenses) {
+  const totalSpentEl = document.getElementById('finTeamTotalSpent');
+  if (totalSpentEl) totalSpentEl.textContent = `Total: ₹${totalExpenses}`;
+
+  const barContainer = document.getElementById('teamSpendBarContainer');
+  const bar = document.getElementById('teamSpendBar');
+  const cardsContainer = document.getElementById('teamSpendCards');
+
+  if (!cardsContainer) return;
+
+  if (!summary || summary.length === 0 || totalExpenses <= 0) {
+    if (barContainer) barContainer.style.display = 'none';
+    cardsContainer.innerHTML = '<span class="muted" style="font-size: 0.85rem; padding: 10px 0;">No member spendings recorded for this batch.</span>';
+    return;
+  }
+
+  const palette = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#475569'];
+
+  // 1. Stacked Bar Chart
+  if (bar && barContainer) {
+    barContainer.style.display = 'block';
+    bar.innerHTML = '';
+    summary.forEach((item, idx) => {
+      if (item.amount <= 0) return;
+      const color = palette[idx % palette.length];
+      const seg = document.createElement('div');
+      seg.style.width = `${item.percentage}%`;
+      seg.style.background = color;
+      seg.style.height = '100%';
+      seg.style.transition = 'width 0.3s ease';
+      seg.title = `${item.member}: ₹${item.amount} (${item.percentage}%)`;
+      bar.appendChild(seg);
+    });
+  }
+
+  // 2. Member Cards Grid
+  cardsContainer.innerHTML = '';
+  summary.forEach((item, idx) => {
+    const color = palette[idx % palette.length];
+    const card = document.createElement('div');
+    card.style.background = '#f8fafc';
+    card.style.border = '1px solid #e2e8f0';
+    card.style.borderRadius = '8px';
+    card.style.padding = '10px 12px';
+    card.style.display = 'flex';
+    card.style.alignItems = 'center';
+    card.style.justifyContent = 'space-between';
+    card.style.gap = '8px';
+
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+        <div style="width:12px; height:12px; border-radius:50%; background:${color}; flex-shrink:0;"></div>
+        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          <div style="font-weight:700; font-size:0.9rem; color:var(--secondary); overflow:hidden; text-overflow:ellipsis;">
+            ${item.member}
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted);">
+            ${item.count} expense${item.count > 1 ? 's' : ''}
+          </div>
+        </div>
+      </div>
+      <div style="text-align:right; flex-shrink:0;">
+        <div style="font-weight:700; font-size:0.95rem; color:var(--danger);">₹${item.amount}</div>
+        <span class="badge" style="background:#e2e8f0; color:var(--secondary); font-size:0.75rem; font-weight:700; padding:2px 6px;">
+          ${item.percentage}%
+        </span>
+      </div>
+    `;
+    cardsContainer.appendChild(card);
+  });
+}
+
 async function saveExpense(e) {
   e.preventDefault();
   const payload = {
     date: document.getElementById('expDate').value,
+    batch_date: document.getElementById('expBatch') ? document.getElementById('expBatch').value || null : null,
+    spent_by: document.getElementById('expSpentBy') ? document.getElementById('expSpentBy').value || null : null,
     category: document.getElementById('expCategory').value,
     amount: parseFloat(document.getElementById('expAmount').value),
     note: document.getElementById('expNote').value.trim()
@@ -1437,6 +1715,19 @@ async function loadMembers() {
       opt2.textContent = m.name;
       filterSelect.appendChild(opt2);
     });
+
+    const expSpentBy = document.getElementById('expSpentBy');
+    if (expSpentBy) {
+      const curSpent = expSpentBy.value;
+      expSpentBy.innerHTML = '<option value="">Select Team Member</option>';
+      teamMembers.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = m.name;
+        expSpentBy.appendChild(opt);
+      });
+      if (curSpent) expSpentBy.value = curSpent;
+    }
   } catch (err) {}
 }
 

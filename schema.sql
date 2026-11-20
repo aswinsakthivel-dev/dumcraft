@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS service_days (
   order_limit INTEGER NOT NULL DEFAULT 50, -- max total portions
   allow_overflow INTEGER NOT NULL DEFAULT 0,
   cutoff_time TEXT, -- e.g. "14:00"
-  note TEXT
+  note TEXT,
+  batch_name TEXT -- e.g. "Batch 2"
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title TEXT NOT NULL,
   assignee TEXT,
   due_date TEXT,
+  batch_date TEXT, -- e.g. "2026-11-22"
   status TEXT NOT NULL DEFAULT 'Pending', -- 'Pending', 'Done'
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   completed_at DATETIME
@@ -65,7 +67,9 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   date TEXT NOT NULL,
-  category TEXT NOT NULL, -- 'ingredients', 'packaging', 'gas', 'delivery', 'other', or custom
+  batch_date TEXT, -- e.g. "2026-11-22"
+  spent_by TEXT, -- Team member name e.g. "Chef"
+  category TEXT NOT NULL, -- 'ingredients', 'wastage', 'packaging', 'gas', 'delivery', 'other', or custom
   amount REAL NOT NULL,
   note TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -105,9 +109,14 @@ CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_feedback_order_no ON order_feedback(order_no);
 CREATE INDEX IF NOT EXISTS idx_order_feedback_created_at ON order_feedback(created_at);
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+CREATE INDEX IF NOT EXISTS idx_expenses_batch_date ON expenses(batch_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_spent_by ON expenses(spent_by);
+CREATE INDEX IF NOT EXISTS idx_tasks_batch_date ON tasks(batch_date);
 CREATE INDEX IF NOT EXISTS idx_income_date ON income_entries(date);
 
 -- Seed Data
+INSERT OR IGNORE INTO service_days (date, open, order_limit, allow_overflow, cutoff_time, note, batch_name)
+VALUES ('2026-11-22', 1, 50, 0, '14:00', 'Sunday Dum Biryani Service', 'Batch 2');
 INSERT OR IGNORE INTO menu_items (id, name, description, price, available, sort)
 VALUES (1, 'Hyderabadi Chicken Biryani, with Mirchi ka Salan & Salad', 'Authentic dum cooked Hyderabadi chicken biryani served with spicy Mirchi ka Salan and fresh onion raita/salad.', 280, 1, 1);
 
